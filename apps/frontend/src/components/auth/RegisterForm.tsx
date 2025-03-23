@@ -17,12 +17,16 @@ export default function RegisterForm() {
     setIsLoading(true);
     setError('');
 
-    // In a real application, you would send the data to your API
-    // For this demo, we'll simulate a successful registration
-    setTimeout(() => {
+    try {
+      // In a real app, this would be an API call to register the user
+      // For this demo, we'll just redirect to login with a success message
+      setTimeout(() => {
+        router.push('/login');
+      }, 1000);
+    } catch (error) {
+      setError('Something went wrong. Please try again.');
       setIsLoading(false);
-      router.push('/login?registered=true');
-    }, 1000);
+    }
   };
 
   return (
@@ -38,7 +42,7 @@ export default function RegisterForm() {
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
-            Full Name
+            Name
           </label>
           <input
             id="name"
@@ -75,6 +79,7 @@ export default function RegisterForm() {
             onChange={(e) => setPassword(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-md"
             required
+            minLength={6}
           />
         </div>
 

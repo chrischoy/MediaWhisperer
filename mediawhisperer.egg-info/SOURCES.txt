@@ -1,0 +1,13 @@
+README.md
+pyproject.toml
+setup.cfg
+setup.py
+apps/api/__init__.py
+apps/api/config.py
+apps/api/dependencies.py
+apps/api/main.py
+mediawhisperer.egg-info/PKG-INFO
+mediawhisperer.egg-info/SOURCES.txt
+mediawhisperer.egg-info/dependency_links.txt
+mediawhisperer.egg-info/requires.txt
+mediawhisperer.egg-info/top_level.txt

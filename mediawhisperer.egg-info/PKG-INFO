@@ -1,3 +1,30 @@
+Metadata-Version: 2.4
+Name: mediawhisperer
+Version: 0.1.0
+Summary: An interactive tool for processing and conversing with media content
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.104.1
+Requires-Dist: uvicorn>=0.23.2
+Requires-Dist: pydantic>=2.4.2
+Requires-Dist: pydantic-settings>=2.0.3
+Requires-Dist: python-multipart>=0.0.6
+Requires-Dist: python-jose>=3.3.0
+Requires-Dist: passlib[bcrypt]~=1.7.4
+Requires-Dist: bcrypt<4.0.0
+Requires-Dist: PyPDF2>=3.0.1
+Requires-Dist: pdf2image>=1.16.3
+Requires-Dist: pytesseract>=0.3.10
+Requires-Dist: transformers>=4.35.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: email-validator>=2.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4.0; extra == "dev"
+Requires-Dist: black>=23.7.0; extra == "dev"
+Requires-Dist: isort>=5.12.0; extra == "dev"
+Requires-Dist: mypy>=1.5.1; extra == "dev"
+
 # MediaWhisperer
 
 An interactive tool for processing and conversing with media content including PDF documents and YouTube videos. MediaWhisperer extracts content, summarizes it, and allows you to have natural language conversations about the media.
