@@ -1,14 +1,11 @@
-import { Metadata } from 'next';
-import { requireAuth } from '@/lib/auth';
+'use client';
+
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { PDFList } from '@/components/pdf';
 
-export const metadata: Metadata = {
-  title: 'Dashboard | MediaWhisperer',
-  description: 'MediaWhisperer Dashboard',
-};
-
-export default async function DashboardPage() {
-  const user = await requireAuth();
+export default function DashboardPage() {
+  const [user, setUser] = useState({ name: 'User' });
 
   return (
     <div className="max-w-4xl mx-auto p-6">
@@ -50,7 +47,7 @@ export default async function DashboardPage() {
         </div>
       </div>
 
-      <div className="bg-white shadow rounded-lg p-6">
+      <div className="bg-white shadow rounded-lg p-6 mb-6">
         <h2 className="text-xl font-semibold mb-4">Terminal Access</h2>
         <p className="mb-4">Access the interactive terminal for advanced operations.</p>
         <Link
@@ -59,6 +56,19 @@ export default async function DashboardPage() {
         >
           Open Terminal
         </Link>
+      </div>
+      
+      <div className="bg-white shadow rounded-lg p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h2 className="text-xl font-semibold">Recent PDFs</h2>
+          <Link
+            href="/pdf"
+            className="text-blue-500 hover:underline text-sm"
+          >
+            View All
+          </Link>
+        </div>
+        <PDFList />
       </div>
     </div>
   );
