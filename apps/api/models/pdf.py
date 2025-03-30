@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, HttpUrl
 
 
 class ProcessingStatus(str, Enum):
@@ -17,7 +17,15 @@ class ProcessingStatus(str, Enum):
 class PDFCreate(BaseModel):
     """PDF creation model."""
 
-    title: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+
+
+class PDFFromURL(BaseModel):
+    """Model for creating a PDF from a URL."""
+
+    url: str
+    title: Optional[str] = None
     description: Optional[str] = None
 
 

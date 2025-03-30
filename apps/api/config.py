@@ -1,6 +1,17 @@
 import os
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+
+def parse_bool_env(value) -> bool:
+    """Parse string to boolean, handling various formats."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if not value or value.lower() in ("false", "0", "no", "n", "f"):
+            return False
+    return True
 
 
 class Settings(BaseSettings):
@@ -26,10 +37,25 @@ class Settings(BaseSettings):
 
     # PDF processing settings
     PDF_TEMP_DIR: str = os.getenv("PDF_TEMP_DIR", "./temp/pdf")
+    # For Google Gemini API
+    GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
+    # For backward compatibility
+    MARKER_PDF_ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    # Enable Vision LLM - set by validator
+    USE_LLM: bool = False
+    # Output format
+    MARKER_OUTPUT_FORMAT: str = os.getenv("MARKER_OUTPUT_FORMAT", "markdown")
+
+    @field_validator("USE_LLM", mode="before")
+    @classmethod
+    def validate_use_llm(cls, v):
+        """Validate and parse USE_LLM from any format to boolean."""
+        return parse_bool_env(v)
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # Ignore extra fields in .env
 
 
 settings = Settings()

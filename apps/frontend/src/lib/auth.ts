@@ -1,5 +1,5 @@
-import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
+import { getServerSession } from 'next-auth';
 import { authOptions } from '@/app/api/auth/[...nextauth]/options';
 
 export async function getSession() {
@@ -9,15 +9,9 @@ export async function getSession() {
 export async function getCurrentUser() {
   const session = await getSession();
 
-  return session?.user;
-}
-
-export async function requireAuth() {
-  const user = await getCurrentUser();
-
-  if (!user) {
+  if (!session?.user?.email) {
     redirect('/login');
   }
 
-  return user;
+  return session.user;
 }

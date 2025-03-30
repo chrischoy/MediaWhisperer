@@ -15,9 +15,12 @@ bcrypt==3.2.2
 PyPDF2==3.0.1
 pdf2image==1.16.3
 pytesseract==0.3.10
+marker-pdf==1.6.2
+Pillow
 
 # LLM integration
 transformers==4.35.0
 
 # Utils
-python-dotenv==1.0.0
+python-dotenv
+requests
