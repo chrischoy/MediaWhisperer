@@ -1,13 +1,21 @@
+import os
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from models.user import User
+from pydantic import BaseModel
 
 from config import settings
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_PREFIX}/auth/login")
+# OAuth2 password bearer for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token", auto_error=False)
+
+# Enable development mode bypass for authentication
+DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
+DEV_USER_ID = int(os.getenv("DEV_USER_ID", "1"))
 
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
@@ -27,72 +35,68 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
     return encoded_jwt
 
 
-async def get_current_user(request: Request, token: str = Depends(oauth2_scheme)):
-    """Get current user from JWT token."""
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+def verify_token(token: str) -> Optional[dict]:
+    """Verify and decode JWT token."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        return payload
+    except JWTError:
+        # Try to decode as a development token if it starts with "mock-token-"
+        if token and token.startswith("mock-token-"):
+            try:
+                # Extract user ID from the mock token
+                user_id = int(token.split("-")[-1])
+                return {"sub": str(user_id)}
+            except (ValueError, IndexError):
+                return None
+        return None
 
-    # Print debug info about the request
-    print("Request headers:", request.headers)
-    auth_header = request.headers.get("authorization")
-    print("Authorization header:", auth_header)
+
+async def get_current_user(
+    request: Request, token: str = Depends(oauth2_scheme)
+) -> User:
+    """Get the current authenticated user."""
+    print("\n=== Authentication Debug ===")
+    print(f"DEV_MODE: {DEV_MODE}")
+    print(f"Request headers: {request.headers.items()}")
+    print(f"Authorization header: {token}")
+
+    if DEV_MODE:
+        print("DEV_MODE enabled, returning dev user")
+        return User(id=DEV_USER_ID, email="dev@example.com", name="Dev User")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     try:
-        # Try to decode the JWT token
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        print("Decoded token payload:", payload)
-
         user_id: str = payload.get("sub")
-
         if user_id is None:
-            print("No 'sub' claim in token")
-            raise credentials_exception
-
-        # Here you would typically fetch the user from database
-        # For now, we'll simulate with a placeholder
-        # In a real implementation, replace with database lookup
-        user = User(id=user_id, email="user@example.com", name="User")
-        print(f"Created user with id: {user_id}")
-
-        if user is None:
-            print("User not found")
-            raise credentials_exception
-
-        return user
-
-    except JWTError as e:
-        print(f"JWT Error: {str(e)}")
-
-        # Development fallback - if token looks like a mock token from frontend
-        if token and token.startswith("mock-token-"):
-            print("Using development fallback for mock token")
-            # Extract user ID from request if available
-            user_id = token.split("-")[-1]
-            return User(
-                id=user_id or "1", email="dev@example.com", name="Development User"
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: missing 'sub' claim",
+                headers={"WWW-Authenticate": "Bearer"},
             )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-        # Try to parse the token as base64-encoded JSON
-        try:
-            import base64
-            import json
+    # In a real app, you would fetch the user from the database here
+    # For now, we'll use the mock user
+    mock_users = {1: {"id": 1, "email": "dev@example.com", "name": "Dev User"}}
+    user = mock_users.get(user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-            # Remove 'Bearer ' prefix if present
-            if token.startswith("Bearer "):
-                token = token[7:]
-
-            decoded = base64.b64decode(token).decode("utf-8")
-            token_data = json.loads(decoded)
-            print("Successfully decoded mock token:", token_data)
-
-            user_id = token_data.get("sub")
-            if user_id:
-                print(f"Using mock token with user_id: {user_id}")
-                return User(id=user_id, email="mock@example.com", name="Mock User")
-        except Exception as e:
-            print(f"Failed to parse mock token: {str(e)}")
-
-        raise credentials_exception
+    return User(**user)

@@ -31,18 +31,41 @@ def save_upload_file(upload_file: UploadFile, user_id: int) -> Tuple[str, str]:
     user_dir = os.path.join(settings.UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
 
-    # Generate unique filename
-    file_extension = os.path.splitext(upload_file.filename)[1]
-    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    # If the original filename was passed, use it, otherwise generate a unique name
+    original_filename = upload_file.filename
+    if not original_filename or original_filename.lower() == "file":
+        file_extension = ".pdf"  # Default to PDF if no filename
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+    else:
+        # Use the original filename but ensure it's safe
+        unique_filename = secure_filename(original_filename)
 
-    # Create the file path
-    file_path = os.path.join(user_dir, unique_filename)
+    # Create the absolute file path
+    file_path = os.path.abspath(os.path.join(user_dir, unique_filename))
 
     # Save the file
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(upload_file.file, buffer)
 
     return unique_filename, file_path
+
+
+def secure_filename(filename: str) -> str:
+    """
+    Return a secure version of a filename that is safe for file systems.
+    """
+    # Get base name in case full path was provided
+    filename = os.path.basename(filename)
+
+    # Replace spaces with underscores and remove other problematic characters
+    filename = "".join(c for c in filename if c.isalnum() or c in "._- ")
+    filename = filename.replace(" ", "_")
+
+    # Ensure the filename is not empty
+    if not filename:
+        filename = f"file_{uuid.uuid4().hex[:8]}"
+
+    return filename
 
 
 def delete_file(file_path: str) -> bool:

@@ -1,19 +1,27 @@
-from typing import Optional, List, Dict, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from typing import Any, Dict, List, Optional
 
-from ..database.models import Conversation, Message
-from ..models.conversation import ConversationCreate, ConversationUpdate, MessageCreate, MessageRole
+from database.models import Conversation, Message
+from models.conversation import (
+    ConversationCreate,
+    ConversationUpdate,
+    MessageCreate,
+    MessageRole,
+)
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
 from .base import BaseRepository
 
 
-class ConversationRepository(BaseRepository[Conversation, ConversationCreate, ConversationUpdate]):
+class ConversationRepository(BaseRepository):
     """Repository for conversation operations."""
 
     def __init__(self):
         super().__init__(Conversation)
 
-    def get_by_user(self, db: Session, user_id: int, skip: int = 0, limit: int = 100) -> List[Conversation]:
+    def get_by_user(
+        self, db: Session, user_id: int, skip: int = 0, limit: int = 100
+    ) -> List[Conversation]:
         """Get all conversations for a specific user."""
         return (
             db.query(Conversation)
@@ -24,7 +32,9 @@ class ConversationRepository(BaseRepository[Conversation, ConversationCreate, Co
             .all()
         )
 
-    def get_by_pdf(self, db: Session, pdf_id: int, skip: int = 0, limit: int = 100) -> List[Conversation]:
+    def get_by_pdf(
+        self, db: Session, pdf_id: int, skip: int = 0, limit: int = 100
+    ) -> List[Conversation]:
         """Get all conversations for a specific PDF document."""
         return (
             db.query(Conversation)
@@ -48,7 +58,9 @@ class ConversationRepository(BaseRepository[Conversation, ConversationCreate, Co
             .all()
         )
 
-    def add_message(self, db: Session, conversation_id: int, content: str, role: MessageRole) -> Message:
+    def add_message(
+        self, db: Session, conversation_id: int, content: str, role: MessageRole
+    ) -> Message:
         """Add a message to a conversation."""
         message = Message(
             conversation_id=conversation_id,

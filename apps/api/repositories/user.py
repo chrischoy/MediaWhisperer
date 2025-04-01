@@ -1,10 +1,12 @@
-from typing import Optional, List
-from sqlalchemy.orm import Session
+from typing import List, Optional
 
-from ..database.models import User
-from ..models.user import UserCreate, UserUpdate
+from database.models import User
+from models.user import UserCreate, UserUpdate
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+from utils.security import get_password_hash, verify_password
+
 from .base import BaseRepository
-from ..utils.security import get_password_hash, verify_password
 
 
 class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
@@ -32,12 +34,12 @@ class UserRepository(BaseRepository[User, UserCreate, UserUpdate]):
     def update(self, db: Session, *, db_obj: User, obj_in: UserUpdate) -> User:
         """Update a user, hashing the password if provided."""
         update_data = obj_in.model_dump(exclude_unset=True)
-        
+
         if "password" in update_data:
             hashed_password = get_password_hash(update_data["password"])
             del update_data["password"]
             update_data["hashed_password"] = hashed_password
-            
+
         return super().update(db, db_obj=db_obj, obj_in=update_data)
 
     def authenticate(self, db: Session, email: str, password: str) -> Optional[User]:

@@ -1,22 +1,22 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from ..models.conversation import (
-    Conversation, 
-    ConversationCreate, 
-    ConversationWithMessages, 
-    ConversationResponse, 
-    MessageCreate, 
-    Message, 
-    MessageRole
+from database.session import get_db
+from dependencies import get_current_user
+from fastapi import APIRouter, Depends, HTTPException, status
+from models.conversation import (
+    Conversation,
+    ConversationCreate,
+    ConversationResponse,
+    ConversationWithMessages,
+    Message,
+    MessageCreate,
+    MessageRole,
 )
-from ..database.session import get_db
-from ..repositories.conversation import conversation_repository
-from ..repositories.pdf import pdf_repository
-from ..dependencies import get_current_user
-from ..models.user import User
-from ..services.conversation_service import generate_assistant_response
+from models.user import User
+from repositories.conversation import conversation_repository
+from repositories.pdf import pdf_repository
+from services.conversation_service import generate_assistant_response
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
@@ -35,28 +35,28 @@ async def create_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="PDF not found",
         )
-    
+
     if pdf.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this PDF",
         )
-    
+
     # Create title if not provided
     if not conversation_in.title:
         conversation_in.title = f"Conversation about {pdf.title}"
-    
+
     # Create conversation
     conversation_data = conversation_in.model_dump()
     conversation_data["user_id"] = current_user.id
     conversation = conversation_repository.create(db, conversation_data)
-    
+
     # Add system message to start the conversation
     system_message = "I'm an AI assistant that can help you understand the content of this PDF document. What would you like to know about it?"
     conversation_repository.add_message(
         db, conversation.id, system_message, MessageRole.SYSTEM
     )
-    
+
     return conversation
 
 
@@ -77,16 +77,13 @@ async def list_conversations(
         conversations = conversation_repository.get_by_user(
             db, current_user.id, skip, limit
         )
-    
+
     # Add message counts to each conversation
     result = []
     for conv in conversations:
         messages = conversation_repository.get_messages(db, conv.id)
-        result.append({
-            **conv.__dict__,
-            "message_count": len(messages)
-        })
-    
+        result.append({**conv.__dict__, "message_count": len(messages)})
+
     return result
 
 
@@ -103,19 +100,16 @@ async def get_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found",
         )
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this conversation",
         )
-    
+
     messages = conversation_repository.get_messages(db, conversation_id)
-    
-    return {
-        **conversation.__dict__,
-        "messages": messages
-    }
+
+    return {**conversation.__dict__, "messages": messages}
 
 
 @router.post("/{conversation_id}/messages", response_model=Message)
@@ -132,18 +126,18 @@ async def add_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found",
         )
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this conversation",
         )
-    
+
     # Add the user message
     user_message = conversation_repository.add_message(
         db, conversation_id, message.content, MessageRole.USER
     )
-    
+
     # Get the PDF document to provide context
     pdf = pdf_repository.get(db, conversation.pdf_id)
     if not pdf:
@@ -151,19 +145,21 @@ async def add_message(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="PDF not found",
         )
-    
+
     # Get previous messages for context
     messages = conversation_repository.get_messages(db, conversation_id)
-    
+
     # Generate AI response
     context = pdf.extracted_text or ""
-    response_content = await generate_assistant_response(context, messages, message.content)
-    
+    response_content = await generate_assistant_response(
+        context, messages, message.content
+    )
+
     # Add the AI response to the conversation
     conversation_repository.add_message(
         db, conversation_id, response_content, MessageRole.ASSISTANT
     )
-    
+
     return user_message
 
 
@@ -180,18 +176,18 @@ async def delete_conversation(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found",
         )
-    
+
     if conversation.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this conversation",
         )
-    
+
     success = conversation_repository.delete(db, conversation_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete conversation",
         )
-    
+
     return None

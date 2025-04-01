@@ -14,6 +14,12 @@ def parse_bool_env(value) -> bool:
     return True
 
 
+# Get the absolute path to the API directory
+API_DIR = os.path.dirname(os.path.abspath(__file__))
+# Get the absolute path to the project root
+PROJECT_ROOT = os.path.dirname(os.path.dirname(API_DIR))
+
+
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -30,13 +36,16 @@ class Settings(BaseSettings):
 
     # Database settings
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./mediawhisperer.db")
+    DATABASE_POOL_SIZE: int = int(os.getenv("DATABASE_POOL_SIZE", "5"))
+    DATABASE_MAX_OVERFLOW: int = int(os.getenv("DATABASE_MAX_OVERFLOW", "10"))
+    DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "false").lower() == "true"
 
     # Storage settings
-    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
+    UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(API_DIR, "uploads"))
     MAX_UPLOAD_SIZE: int = 20 * 1024 * 1024  # 20MB
 
     # PDF processing settings
-    PDF_TEMP_DIR: str = os.getenv("PDF_TEMP_DIR", "./temp/pdf")
+    PDF_TEMP_DIR: str = os.getenv("PDF_TEMP_DIR", os.path.join(API_DIR, "temp/pdf"))
     # For Google Gemini API
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     # For backward compatibility

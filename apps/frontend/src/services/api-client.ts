@@ -59,6 +59,8 @@ export class ApiClient {
 
       // Get authentication token from session
       const session = await getSession();
+      console.log(`API Request: ${method} ${url}`);
+      console.log(`Session:`, session ? 'Available' : 'Not available');
 
       const headers = {
         'Content-Type': 'application/json',
@@ -68,6 +70,9 @@ export class ApiClient {
       // Add authorization header if token exists
       if (session?.accessToken) {
         headers['Authorization'] = `Bearer ${session.accessToken}`;
+        console.log(`Using token: ${session.accessToken.substring(0, 10)}...`);
+      } else {
+        console.log(`No access token available in session`);
       }
 
       const config: RequestInit = {
@@ -81,6 +86,7 @@ export class ApiClient {
       }
 
       console.log(`API ${method} Request to: ${url}`);
+      console.log(`Headers:`, headers);
 
       const response = await fetch(url, config);
       const status = response.status;
@@ -94,13 +100,17 @@ export class ApiClient {
       try {
         data = await response.json();
       } catch (e) {
+        console.error('Failed to parse JSON response:', e);
         data = undefined;
       }
+
+      console.log(`API Response Status: ${status}`);
 
       if (!response.ok) {
         console.error(`API Error (${status}):`, data);
         // Handle authentication errors
         if (status === 401) {
+          console.error(`Authentication error. Session:`, session);
           return {
             status,
             error: 'Not authenticated',

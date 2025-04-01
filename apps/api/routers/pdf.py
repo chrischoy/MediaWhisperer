@@ -1,9 +1,10 @@
+import glob
 import json
 import os
 import shutil
 import tempfile
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from dependencies import get_current_user
@@ -12,11 +13,14 @@ from fastapi.responses import JSONResponse
 from models.pdf import PDFCreate, PDFDocument, PDFFromURL, PDFResponse, ProcessingStatus
 from models.user import User
 from services.pdf_service import PDFProcessingService
+from utils.json_parser import safe_load_json
+from utils.logger import get_logger
 from utils.pdf_utils import cleanup_pdf_images
 from utils.storage import save_upload_file
 
 from config import settings
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 # Mock database file path
@@ -26,14 +30,27 @@ MOCK_DB_PATH = os.path.join(settings.UPLOAD_DIR, "mock_pdfs.json")
 if os.path.exists(MOCK_DB_PATH):
     try:
         with open(MOCK_DB_PATH, "r") as f:
-            mock_pdfs = json.load(f)
-        print(f"Loaded {len(mock_pdfs)} mock PDFs from {MOCK_DB_PATH}")
+            loaded_data = json.load(f)
+
+            # Convert string keys to integers
+            mock_pdfs = {}
+            for key, value in loaded_data.items():
+                try:
+                    # Try to convert key to integer
+                    int_key = int(key)
+                    mock_pdfs[int_key] = value
+                except ValueError:
+                    # If not convertible, keep as string
+                    mock_pdfs[key] = value
+
+        logger.info(f"Loaded {len(mock_pdfs)} mock PDFs from {MOCK_DB_PATH}")
+        logger.info(f"PDF keys: {list(mock_pdfs.keys())}")
     except Exception as e:
-        print(f"Error loading mock database: {e}")
+        logger.error(f"Error loading mock database: {e}")
         mock_pdfs = {}
 else:
     mock_pdfs = {}
-    print(f"Created new mock database at {MOCK_DB_PATH}")
+    logger.info(f"Created new mock database at {MOCK_DB_PATH}")
 
 
 # Helper function to save mock database to file
@@ -45,9 +62,17 @@ def save_mock_db():
 
         with open(MOCK_DB_PATH, "w") as f:
             json.dump(mock_pdfs, f)
-        print(f"Saved {len(mock_pdfs)} mock PDFs to {MOCK_DB_PATH}")
+        logger.info(f"Saved {len(mock_pdfs)} mock PDFs to {MOCK_DB_PATH}")
     except Exception as e:
-        print(f"Error saving mock database: {e}")
+        logger.error(f"Error saving mock database: {e}")
+
+
+# Helper function to normalize file paths for consistent storage and retrieval
+def normalize_path(path):
+    """Convert relative path to absolute if needed."""
+    if path and not os.path.isabs(path):
+        return os.path.abspath(os.path.join(os.path.dirname(settings.UPLOAD_DIR), path))
+    return path
 
 
 # Helper function to get the PDF detail file path
@@ -62,52 +87,39 @@ def get_pdf_detail_path(pdf_id, user_id, base_filename=None):
     return os.path.join(user_dir, f"{base_name}_detail.json")
 
 
-# Helper function to save PDF details to a separate file
-def save_pdf_details(pdf_id, details):
-    """Save PDF details to a separate JSON file."""
-    if pdf_id not in mock_pdfs:
-        return
-
-    pdf_meta = mock_pdfs[pdf_id]
-    user_id = pdf_meta.get("user_id")
-    filename = pdf_meta.get("filename")
-
-    detail_path = get_pdf_detail_path(pdf_id, user_id, filename)
-
-    try:
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(detail_path), exist_ok=True)
-
-        with open(detail_path, "w") as f:
-            json.dump(details, f)
-        print(f"Saved PDF details to {detail_path}")
-
-        # Update the metadata with the detail file path
-        pdf_meta["detail_path"] = detail_path
-        save_mock_db()
-
-    except Exception as e:
-        print(f"Error saving PDF details: {e}")
-
-
 # Helper function to load PDF details from a separate file
-def load_pdf_details(pdf_id):
-    """Load PDF details from a separate JSON file."""
-    if pdf_id not in mock_pdfs:
+def load_pdf_details(pdf_id) -> Optional[Dict[str, Any]]:
+    """Load PDF details from the upload folder."""
+    logger.info(f"Loading PDF details for {pdf_id}")
+    pdf_dir = os.path.join(settings.UPLOAD_DIR, f"{pdf_id}")
+    # Check if the directory exists
+    if not os.path.exists(pdf_dir):
         return None
+    # Grep md and jpeg files
+    md_files = glob.glob(os.path.join(pdf_dir, "*.md"))
+    jpeg_files = glob.glob(os.path.join(pdf_dir, "*.jpeg"))
+    logger.info(
+        f"Found {len(md_files)} markdown files and {len(jpeg_files)} jpeg files"
+    )
+    # Load the markdown file and return the content
+    pdf_markdown = None
+    if md_files:
+        with open(md_files[0], "r") as f:
+            pdf_markdown = f.read()
+    # Return None if no files are found
+    return {
+        "markdown": pdf_markdown,
+        "images": jpeg_files,
+    }
 
-    pdf_meta = mock_pdfs[pdf_id]
-    detail_path = pdf_meta.get("detail_path")
 
-    if not detail_path or not os.path.exists(detail_path):
-        return None
-
-    try:
-        with open(detail_path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"Error loading PDF details: {e}")
-        return None
+# Fix existing file paths in the database at startup
+for _pdf_id, pdf_meta in mock_pdfs.items():
+    if "file_path" in pdf_meta:
+        pdf_meta["file_path"] = normalize_path(pdf_meta["file_path"])
+    if "detail_path" in pdf_meta:
+        pdf_meta["detail_path"] = normalize_path(pdf_meta["detail_path"])
+save_mock_db()
 
 
 @router.post("/upload", response_model=PDFResponse, status_code=status.HTTP_201_CREATED)
@@ -165,32 +177,26 @@ async def upload_pdf(
 
         # Process PDF with marker-pdf
         (
-            page_count,
-            extracted_text,
-            pages,
+            markdown_path,
+            image_paths,
             summary,
         ) = await PDFProcessingService.process_pdf(file_path)
 
         # Create detailed content for separate file
         pdf_details = {
-            "page_count": page_count,
-            "extracted_text": extracted_text,
-            "pages": pages,
+            "markdown_path": markdown_path,
+            "image_paths": image_paths,
             "summary": summary,
         }
 
-        # Save detailed content to separate file
-        save_pdf_details(pdf_id, pdf_details)
-
         # Update basic metadata
         pdf_meta["status"] = ProcessingStatus.COMPLETED
-        pdf_meta["page_count"] = page_count
         save_mock_db()
 
     except Exception as e:
         pdf_meta["status"] = ProcessingStatus.FAILED
         save_mock_db()
-        print(f"Error processing PDF: {str(e)}")
+        logger.error(f"Error processing PDF: {str(e)}")
 
     # Combine metadata and details for the response
     pdf_details = load_pdf_details(pdf_id) or {}
@@ -272,15 +278,15 @@ async def process_pdf_from_url(
                     else:
                         title = f"PDF from URL {len(mock_pdfs) + 1}"
                 except Exception as e:
-                    print(f"Error generating title: {e}")
+                    logger.error(f"Error generating title: {e}")
                     title = f"PDF from URL {len(mock_pdfs) + 1}"
 
         # Create user directory if it doesn't exist
         user_dir = os.path.join(settings.UPLOAD_DIR, str(current_user.id))
         os.makedirs(user_dir, exist_ok=True)
 
-        # Create permanent path
-        permanent_path = os.path.join(user_dir, filename)
+        # Create permanent path (ensure it's absolute)
+        permanent_path = os.path.abspath(os.path.join(user_dir, filename))
 
         # Copy temporary file to permanent location
         shutil.copy(temp_file_path, permanent_path)
@@ -312,35 +318,29 @@ async def process_pdf_from_url(
 
             # Process PDF with marker-pdf
             (
-                page_count,
-                extracted_text,
-                pages,
+                markdown_path,
+                image_paths,
                 summary,
             ) = await PDFProcessingService.process_pdf(permanent_path)
 
             # Create detailed content for separate file
             pdf_details = {
-                "page_count": page_count,
-                "extracted_text": extracted_text,
-                "pages": pages,
+                "markdown_path": markdown_path,
+                "image_paths": image_paths,
                 "summary": summary,
             }
 
-            # Save detailed content to separate file
-            save_pdf_details(pdf_id, pdf_details)
-
             # Update basic metadata
             pdf_meta["status"] = ProcessingStatus.COMPLETED
-            pdf_meta["page_count"] = page_count
             save_mock_db()
 
         except Exception as e:
+            pdf_details = {}
             pdf_meta["status"] = ProcessingStatus.FAILED
             save_mock_db()
-            print(f"Error processing PDF from URL: {str(e)}")
+            logger.error(f"Error processing PDF from URL: {str(e)}")
 
         # Combine metadata and details for the response
-        pdf_details = load_pdf_details(pdf_id) or {}
         response_data = {**pdf_meta, **pdf_details}
 
         return response_data
@@ -360,11 +360,11 @@ async def process_pdf_from_url(
 @router.get("/list", response_model=List[PDFResponse])
 async def list_pdfs(current_user: User = Depends(get_current_user)):
     """List all PDFs uploaded by the current user."""
-    print(f"User {current_user.id} requesting PDF list")
-    print(f"Total PDFs in mock database: {len(mock_pdfs)}")
+    logger.info(f"User {current_user.id} requesting PDF list")
+    logger.info(f"Total PDFs in mock database: {len(mock_pdfs)}")
 
     user_pdfs = [pdf for pdf in mock_pdfs.values() if pdf["user_id"] == current_user.id]
-    print(f"Found {len(user_pdfs)} PDFs for user {current_user.id}")
+    logger.info(f"Found {len(user_pdfs)} PDFs for user {current_user.id}")
 
     return user_pdfs
 
@@ -372,25 +372,46 @@ async def list_pdfs(current_user: User = Depends(get_current_user)):
 @router.get("/{pdf_id}", response_model=PDFResponse)
 async def get_pdf(pdf_id: int, current_user: User = Depends(get_current_user)):
     """Get PDF document details."""
-    # Check if PDF exists
-    if pdf_id not in mock_pdfs:
+    logger.info(f"\n====== GET PDF ENDPOINT DEBUG ======")
+    logger.info(f"Requested PDF ID: {pdf_id}, type: {type(pdf_id)}")
+    logger.info(f"Current user: {current_user}")
+    logger.info(f"Total PDFs in mock_pdfs: {len(mock_pdfs)}")
+    logger.info(f"Available PDFs keys: {list(mock_pdfs.keys())}")
+    logger.info(f"mock_pdfs directory: {os.path.abspath(MOCK_DB_PATH)}")
+
+    # Get PDF by ID
+    pdf_meta = mock_pdfs.get(pdf_id)
+
+    # If file doesn't exist, raise 404
+    if not pdf_meta:
+        logger.info(f"File not found for PDF ID: {pdf_id}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
 
-    pdf_meta = mock_pdfs[pdf_id]
-
     # Check if user owns the PDF
     if pdf_meta["user_id"] != current_user.id:
+        logger.info(f"User {current_user.id} does not own PDF {pdf_id}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
     # Load details from separate file
-    pdf_details = load_pdf_details(pdf_id)
+    pdf_details = load_pdf_details(pdf_id)  # keys: markdown and images
 
-    # Combine metadata and details
+    if "markdown" not in pdf_details:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PDF details do not contain markdown",
+        )
+
+    if "detail_path" in pdf_meta:
+        logger.info(f"Detail path: {pdf_meta['detail_path']}")
+        logger.info(f"Detail path exists: {os.path.exists(pdf_meta['detail_path'])}")
+
+    # Combine metadata and details, handling the case where details might be None
     response_data = {**pdf_meta, **pdf_details}
+    logger.info(f"====== END PDF ENDPOINT DEBUG ======")
 
     return response_data
 
@@ -398,13 +419,14 @@ async def get_pdf(pdf_id: int, current_user: User = Depends(get_current_user)):
 @router.get("/{pdf_id}/content")
 async def get_pdf_content(pdf_id: int, current_user: User = Depends(get_current_user)):
     """Get processed PDF content in markdown format."""
+    # Get PDF by ID
+    pdf_meta = mock_pdfs.get(pdf_id)
+
     # Check if PDF exists
-    if pdf_id not in mock_pdfs:
+    if not pdf_meta:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
-
-    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
     if pdf_meta["user_id"] != current_user.id:
@@ -420,43 +442,32 @@ async def get_pdf_content(pdf_id: int, current_user: User = Depends(get_current_
         )
 
     # Load details from separate file
-    pdf_details = load_pdf_details(pdf_id)
+    pdf_details = load_pdf_details(pdf_id)  # keys: markdown and images
 
     # Return actual content if available
-    if pdf_details and "extracted_text" in pdf_details and "pages" in pdf_details:
+    if pdf_details and "markdown" in pdf_details and "images" in pdf_details:
         return {
-            "text": pdf_details["extracted_text"],
-            "pages": pdf_details["pages"],
+            "markdown": pdf_details["markdown"],
+            "images": pdf_details["images"],
         }
 
-    # Fallback to mock content (for development only)
-    return {
-        "text": "# Sample PDF Content for Development\n\nThis is the extracted text from the PDF in markdown format. If you are seeing this, it means the PDF was not processed correctly.",  # noqa: E501
-        "pages": [
-            {
-                "page_number": 1,
-                "text": "## Page 1\n\nPage 1 content in markdown.",
-                "images": [],
-            },
-            {
-                "page_number": 2,
-                "text": "## Page 2\n\nPage 2 content in markdown.",
-                "images": [],
-            },
-        ],
-    }
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="PDF details do not contain markdown or images",
+    )
 
 
 @router.get("/{pdf_id}/summary")
 async def get_pdf_summary(pdf_id: int, current_user: User = Depends(get_current_user)):
     """Get PDF summary."""
+    # Get PDF by ID
+    pdf_meta = mock_pdfs.get(pdf_id)
+
     # Check if PDF exists
-    if pdf_id not in mock_pdfs:
+    if not pdf_meta:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
-
-    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
     if pdf_meta["user_id"] != current_user.id:
@@ -478,24 +489,23 @@ async def get_pdf_summary(pdf_id: int, current_user: User = Depends(get_current_
     if pdf_details and "summary" in pdf_details:
         return pdf_details["summary"]
 
-    # Fallback to mock summary
-    return {
-        "title": pdf_meta["title"],
-        "key_points": ["Key point 1", "Key point 2", "Key point 3"],
-        "summary": "This is a summary of the PDF content.",
-    }
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="PDF summary not found",
+    )
 
 
 @router.delete("/{pdf_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_pdf(pdf_id: int, current_user: User = Depends(get_current_user)):
     """Delete a PDF document."""
+    # Get PDF by ID
+    pdf_meta = mock_pdfs.get(pdf_id)
+
     # Check if PDF exists
-    if pdf_id not in mock_pdfs:
+    if not pdf_meta:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
-
-    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
     if pdf_meta["user_id"] != current_user.id:

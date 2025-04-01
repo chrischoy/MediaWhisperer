@@ -8,6 +8,8 @@ export interface PDFDocument {
   status: string;
   page_count?: number;
   created_at: string;
+  markdown?: string;
+  images?: string[];
 }
 
 export interface PDFUploadResponse {
@@ -34,14 +36,56 @@ export class PDFService {
    * Get details for a specific PDF
    */
   async getPDF(id: string | number) {
-    return apiClient.get<PDFDocument>(`/pdf/${id}`);
+    console.log(`Fetching PDF with ID: ${id}`);
+    // Ensure id is treated as a number for compatibility with backend
+    const numericId = typeof id === 'string' ? parseInt(id, 10) : id;
+    if (isNaN(numericId)) {
+      console.error(`Invalid PDF ID: ${id}`);
+      return {
+        status: 400,
+        error: 'Invalid PDF ID',
+      };
+    }
+
+    try {
+      const response = await apiClient.get<PDFDocument>(`/pdf/${numericId}`);
+      console.log(`PDF fetch response:`, response);
+
+      // If we have data, ensure it's properly structured
+      if (response.data) {
+        // Log the full response data for debugging
+        console.log('Full PDF data:', response.data);
+
+        // If markdown is not in the main response, try to fetch it separately
+        if (!response.data.markdown) {
+          try {
+            const contentResponse = await this.getPDFContent(numericId);
+            if (contentResponse.data) {
+              response.data.markdown = contentResponse.data.markdown;
+              response.data.images = contentResponse.data.images;
+              console.log('Updated PDF data with content:', response.data);
+            }
+          } catch (contentError) {
+            console.error('Error fetching PDF content:', contentError);
+          }
+        }
+      }
+
+      return response;
+    } catch (error) {
+      console.error(`Error fetching PDF ${numericId}:`, error);
+      return {
+        status: 500,
+        error: error instanceof Error ? error.message : 'Unknown error fetching PDF',
+      };
+    }
   }
 
   /**
    * Get the processed content of a PDF
    */
   async getPDFContent(id: string | number) {
-    return apiClient.get<{ content: string }>(`/pdf/${id}/content`);
+    return apiClient.get<{ markdown: string; images: string[] }>(`/pdf/${id}/content`);
   }
 
   /**

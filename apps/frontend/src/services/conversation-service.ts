@@ -38,28 +38,28 @@ export class ConversationService {
    */
   async getConversations(pdfId?: string | number) {
     const options = pdfId ? { params: { pdf_id: pdfId } } : undefined;
-    return apiClient.get<ConversationListItem[]>('/api/conversations', options);
+    return apiClient.get<ConversationListItem[]>('/conversations', options);
   }
 
   /**
    * Get a specific conversation with its messages
    */
   async getConversation(id: string | number) {
-    return apiClient.get<ConversationWithMessages>(`/api/conversations/${id}`);
+    return apiClient.get<ConversationWithMessages>(`/conversations/${id}`);
   }
 
   /**
    * Create a new conversation for a PDF
    */
   async createConversation(data: ConversationCreate) {
-    return apiClient.post<Conversation>('/api/conversations', data);
+    return apiClient.post<Conversation>('/conversations', data);
   }
 
   /**
    * Add a new message to a conversation
    */
   async addMessage(conversationId: string | number, content: string) {
-    return apiClient.post<Message>(`/api/conversations/${conversationId}/messages`, {
+    return apiClient.post<Message>(`/conversations/${conversationId}/messages`, {
       content,
     });
   }
@@ -68,7 +68,7 @@ export class ConversationService {
    * Delete a conversation
    */
   async deleteConversation(id: string | number) {
-    return apiClient.delete<void>(`/api/conversations/${id}`);
+    return apiClient.delete<void>(`/conversations/${id}`);
   }
 }
 

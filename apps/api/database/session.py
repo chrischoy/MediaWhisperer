@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from ..config import settings
+from config import settings
 
 # Create SQLAlchemy engine with connection pooling
 engine = create_engine(
@@ -26,6 +26,7 @@ Base = declarative_base()
 def get_db():
     """
     Dependency function to get a database session.
+
     Usage with FastAPI:
     ```
     @app.get("/items/")

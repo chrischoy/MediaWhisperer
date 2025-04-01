@@ -79,3 +79,14 @@ class PDFResponse(BaseModel):
 
     class Config:
         orm_mode = True
+
+
+class PDFUpdate(BaseModel):
+    """Model for updating PDF document fields."""
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    # Add other fields that should be updatable
+
+    class Config:
+        orm_mode = True

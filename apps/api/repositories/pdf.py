@@ -1,9 +1,10 @@
-from typing import Optional, List, Dict, Any
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from typing import Any, Dict, List, Optional
 
-from ..database.models import PDFDocument, PDFPage, PDFImage
-from ..models.pdf import PDFCreate, PDFUpdate, ProcessingStatus
+from database.models import PDFDocument, PDFImage, PDFPage
+from models.pdf import PDFCreate, PDFUpdate, ProcessingStatus
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
 from .base import BaseRepository
 
 
@@ -13,7 +14,9 @@ class PDFRepository(BaseRepository[PDFDocument, PDFCreate, PDFUpdate]):
     def __init__(self):
         super().__init__(PDFDocument)
 
-    def get_by_user(self, db: Session, user_id: int, skip: int = 0, limit: int = 100) -> List[PDFDocument]:
+    def get_by_user(
+        self, db: Session, user_id: int, skip: int = 0, limit: int = 100
+    ) -> List[PDFDocument]:
         """Get all PDFs for a specific user."""
         return (
             db.query(PDFDocument)
@@ -28,31 +31,37 @@ class PDFRepository(BaseRepository[PDFDocument, PDFCreate, PDFUpdate]):
         """Get a PDF by file path."""
         return db.query(PDFDocument).filter(PDFDocument.file_path == file_path).first()
 
-    def update_status(self, db: Session, pdf_id: int, status: ProcessingStatus) -> Optional[PDFDocument]:
+    def update_status(
+        self, db: Session, pdf_id: int, status: ProcessingStatus
+    ) -> Optional[PDFDocument]:
         """Update the processing status of a PDF."""
         pdf = self.get(db, pdf_id)
         if not pdf:
             return None
-        
+
         pdf.status = status
         db.add(pdf)
         db.commit()
         db.refresh(pdf)
         return pdf
 
-    def update_summary(self, db: Session, pdf_id: int, summary: str) -> Optional[PDFDocument]:
+    def update_summary(
+        self, db: Session, pdf_id: int, summary: str
+    ) -> Optional[PDFDocument]:
         """Update the summary of a PDF."""
         pdf = self.get(db, pdf_id)
         if not pdf:
             return None
-        
+
         pdf.summary = summary
         db.add(pdf)
         db.commit()
         db.refresh(pdf)
         return pdf
 
-    def add_page(self, db: Session, pdf_id: int, page_number: int, text: str) -> PDFPage:
+    def add_page(
+        self, db: Session, pdf_id: int, page_number: int, text: str
+    ) -> PDFPage:
         """Add a page to a PDF document."""
         page = PDFPage(
             pdf_id=pdf_id,
@@ -65,7 +74,13 @@ class PDFRepository(BaseRepository[PDFDocument, PDFCreate, PDFUpdate]):
         return page
 
     def add_image(
-        self, db: Session, pdf_id: int, page_number: int, image_path: str, width: int = None, height: int = None
+        self,
+        db: Session,
+        pdf_id: int,
+        page_number: int,
+        image_path: str,
+        width: int = None,
+        height: int = None,
     ) -> PDFImage:
         """Add an image to a PDF document."""
         image = PDFImage(

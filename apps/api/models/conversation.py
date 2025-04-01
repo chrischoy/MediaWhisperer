@@ -37,6 +37,13 @@ class ConversationCreate(BaseModel):
     """Conversation creation model."""
 
     title: Optional[str] = None
+    pdf_id: int
+
+
+class ConversationUpdate(BaseModel):
+    """Conversation update model."""
+
+    title: Optional[str] = None
 
 
 class Conversation(BaseModel):
@@ -49,6 +56,21 @@ class Conversation(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     messages: Optional[List[Message]] = None
+
+    class Config:
+        orm_mode = True
+
+
+class ConversationWithMessages(BaseModel):
+    """Conversation with messages model."""
+
+    id: int
+    pdf_id: int
+    user_id: int
+    title: str
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    messages: List[Message]
 
     class Config:
         orm_mode = True
