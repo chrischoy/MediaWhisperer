@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSession } from 'next-auth/react';
 import { pdfService, PDFDocument } from '@/services';
 
 const PDFList = () => {
+  const { data: session, status } = useSession();
   const [pdfs, setPdfs] = useState<PDFDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -12,24 +14,37 @@ const PDFList = () => {
   useEffect(() => {
     const fetchPDFs = async () => {
       try {
+        // First check if user is authenticated
+        if (status === 'loading') {
+          return; // Wait until session is loaded
+        }
+
+        if (status === 'unauthenticated' || !session) {
+          throw new Error('Not authenticated');
+        }
+
         setLoading(true);
         const response = await pdfService.getPDFs();
-        
+
         if (response.error) {
           throw new Error(response.error);
         }
-        
+
         setPdfs(response.data || []);
       } catch (err) {
         console.error('Error fetching PDFs:', err);
-        setError('Failed to load PDFs. Please try again.');
+        if (err instanceof Error && err.message === 'Not authenticated') {
+          setError('Please log in to view your PDFs.');
+        } else {
+          setError('Failed to load PDFs. Please try again.');
+        }
       } finally {
         setLoading(false);
       }
     };
 
     fetchPDFs();
-  }, []);
+  }, [session, status]);
 
   if (loading) {
     return (
@@ -40,11 +55,7 @@ const PDFList = () => {
   }
 
   if (error) {
-    return (
-      <div className="p-4 bg-red-50 text-red-500 rounded-md">
-        {error}
-      </div>
-    );
+    return <div className="p-4 bg-red-50 text-red-500 rounded-md">{error}</div>;
   }
 
   if (pdfs.length === 0) {
@@ -61,7 +72,7 @@ const PDFList = () => {
       <h2 className="text-xl font-semibold p-6 border-b">Your PDFs</h2>
       <div className="divide-y">
         {pdfs.map((pdf) => (
-          <Link 
+          <Link
             key={pdf.id}
             href={`/pdf/${pdf.id}`}
             className="block p-6 hover:bg-gray-50 transition"
@@ -74,12 +85,17 @@ const PDFList = () => {
                 )}
                 <div className="flex space-x-4 mt-2">
                   <p className="text-gray-500 text-sm">
-                    <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle"
-                      style={{ 
-                        backgroundColor: 
-                          pdf.status === 'completed' ? '#10B981' : 
-                          pdf.status === 'processing' ? '#F59E0B' : 
-                          pdf.status === 'error' ? '#EF4444' : '#6B7280'
+                    <span
+                      className="inline-block w-2 h-2 rounded-full mr-1 align-middle"
+                      style={{
+                        backgroundColor:
+                          pdf.status === 'completed'
+                            ? '#10B981'
+                            : pdf.status === 'processing'
+                              ? '#F59E0B'
+                              : pdf.status === 'error'
+                                ? '#EF4444'
+                                : '#6B7280',
                       }}
                     ></span>
                     <span className="capitalize">{pdf.status}</span>
@@ -92,8 +108,17 @@ const PDFList = () => {
                   </p>
                 </div>
               </div>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5 text-gray-400"
+                viewBox="0 0 20 20"
+                fill="currentColor"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+                  clipRule="evenodd"
+                />
               </svg>
             </div>
           </Link>

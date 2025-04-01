@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -28,6 +28,50 @@ export default function PDFImport({ onSuccess }: PDFImportProps) {
     }
   };
 
+  // Detect if input is an arXiv URL or ID
+  const isArxivIdentifier = (str: string) => {
+    const arxivAbsRegex = /arxiv\.org\/abs\/(\d+\.\d+)/i;
+    const arxivPdfRegex = /arxiv\.org\/pdf\/(\d+\.\d+)/i;
+    const arxivIdRegex = /^arxiv:(\d+\.\d+)$/i;
+
+    return arxivAbsRegex.test(str) || arxivPdfRegex.test(str) || arxivIdRegex.test(str);
+  };
+
+  // Convert various arXiv formats to the proper PDF URL
+  const formatArxivUrl = (str: string) => {
+    // Extract the arXiv ID
+    let arxivId = '';
+
+    const absMatch = str.match(/arxiv\.org\/abs\/(\d+\.\d+)/i);
+    const pdfMatch = str.match(/arxiv\.org\/pdf\/(\d+\.\d+)/i);
+    const idMatch = str.match(/^arxiv:(\d+\.\d+)$/i);
+
+    if (absMatch && absMatch[1]) {
+      arxivId = absMatch[1];
+    } else if (pdfMatch && pdfMatch[1]) {
+      arxivId = pdfMatch[1];
+    } else if (idMatch && idMatch[1]) {
+      arxivId = idMatch[1];
+    }
+
+    if (arxivId) {
+      return `https://arxiv.org/pdf/${arxivId}.pdf`;
+    }
+
+    // Return original if not recognized
+    return str;
+  };
+
+  // Effect to format arXiv URLs when detected
+  useEffect(() => {
+    if (isURL(input) && isArxivIdentifier(input)) {
+      const formattedUrl = formatArxivUrl(input);
+      if (formattedUrl !== input) {
+        setInput(formattedUrl);
+      }
+    }
+  }, [input]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
@@ -39,6 +83,21 @@ export default function PDFImport({ onSuccess }: PDFImportProps) {
     setInput(e.target.value);
     // If it's a URL, clear any selected file
     if (isURL(e.target.value)) {
+      setSelectedFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const clipboardData = e.clipboardData.getData('text');
+
+    // If clipboard contains an arXiv identifier, format it
+    if (isArxivIdentifier(clipboardData)) {
+      e.preventDefault();
+      const formattedUrl = formatArxivUrl(clipboardData);
+      setInput(formattedUrl);
       setSelectedFile(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -109,13 +168,16 @@ export default function PDFImport({ onSuccess }: PDFImportProps) {
   };
 
   const processURL = async (url: string) => {
+    // For arXiv URLs, ensure they have the correct format
+    const finalUrl = isArxivIdentifier(url) ? formatArxivUrl(url) : url;
+
     const response = await fetch('/api/pdf/from-url', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        url,
+        url: finalUrl,
         description,
       }),
     });
@@ -195,10 +257,16 @@ export default function PDFImport({ onSuccess }: PDFImportProps) {
               type="text"
               value={input}
               onChange={handleInputChange}
+              onPaste={handlePaste}
               placeholder="https://example.com/document.pdf or drag & drop"
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
               disabled={isLoading}
             />
+
+            <p className="text-xs text-gray-500">
+              Supported formats: PDF files, PDF URLs, arXiv links (e.g.,
+              https://arxiv.org/abs/2304.09871)
+            </p>
           </div>
         </div>
 

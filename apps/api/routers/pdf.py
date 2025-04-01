@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import tempfile
@@ -18,9 +19,95 @@ from config import settings
 
 router = APIRouter()
 
-# Mock database for demonstration
-# In a real app, replace this with actual database operations
-mock_pdfs = {}
+# Mock database file path
+MOCK_DB_PATH = os.path.join(settings.UPLOAD_DIR, "mock_pdfs.json")
+
+# Initialize mock database from file or create empty one
+if os.path.exists(MOCK_DB_PATH):
+    try:
+        with open(MOCK_DB_PATH, "r") as f:
+            mock_pdfs = json.load(f)
+        print(f"Loaded {len(mock_pdfs)} mock PDFs from {MOCK_DB_PATH}")
+    except Exception as e:
+        print(f"Error loading mock database: {e}")
+        mock_pdfs = {}
+else:
+    mock_pdfs = {}
+    print(f"Created new mock database at {MOCK_DB_PATH}")
+
+
+# Helper function to save mock database to file
+def save_mock_db():
+    """Save mock database to file."""
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(MOCK_DB_PATH), exist_ok=True)
+
+        with open(MOCK_DB_PATH, "w") as f:
+            json.dump(mock_pdfs, f)
+        print(f"Saved {len(mock_pdfs)} mock PDFs to {MOCK_DB_PATH}")
+    except Exception as e:
+        print(f"Error saving mock database: {e}")
+
+
+# Helper function to get the PDF detail file path
+def get_pdf_detail_path(pdf_id, user_id, base_filename=None):
+    """Get the path to the PDF detail JSON file."""
+    if base_filename:
+        base_name = os.path.splitext(base_filename)[0]
+    else:
+        base_name = f"pdf_{pdf_id}"
+
+    user_dir = os.path.join(settings.UPLOAD_DIR, str(user_id))
+    return os.path.join(user_dir, f"{base_name}_detail.json")
+
+
+# Helper function to save PDF details to a separate file
+def save_pdf_details(pdf_id, details):
+    """Save PDF details to a separate JSON file."""
+    if pdf_id not in mock_pdfs:
+        return
+
+    pdf_meta = mock_pdfs[pdf_id]
+    user_id = pdf_meta.get("user_id")
+    filename = pdf_meta.get("filename")
+
+    detail_path = get_pdf_detail_path(pdf_id, user_id, filename)
+
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(detail_path), exist_ok=True)
+
+        with open(detail_path, "w") as f:
+            json.dump(details, f)
+        print(f"Saved PDF details to {detail_path}")
+
+        # Update the metadata with the detail file path
+        pdf_meta["detail_path"] = detail_path
+        save_mock_db()
+
+    except Exception as e:
+        print(f"Error saving PDF details: {e}")
+
+
+# Helper function to load PDF details from a separate file
+def load_pdf_details(pdf_id):
+    """Load PDF details from a separate JSON file."""
+    if pdf_id not in mock_pdfs:
+        return None
+
+    pdf_meta = mock_pdfs[pdf_id]
+    detail_path = pdf_meta.get("detail_path")
+
+    if not detail_path or not os.path.exists(detail_path):
+        return None
+
+    try:
+        with open(detail_path, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Error loading PDF details: {e}")
+        return None
 
 
 @router.post("/upload", response_model=PDFResponse, status_code=status.HTTP_201_CREATED)
@@ -54,9 +141,9 @@ async def upload_pdf(
         if len(title) < 3 or title.startswith("file") or title.isdigit():
             title = f"PDF Document {len(mock_pdfs) + 1}"
 
-    # Create PDF document
+    # Create PDF document metadata
     pdf_id = len(mock_pdfs) + 1
-    pdf_doc = {
+    pdf_meta = {
         "id": pdf_id,
         "title": title,
         "description": description,
@@ -68,11 +155,13 @@ async def upload_pdf(
     }
 
     # Store in mock database
-    mock_pdfs[pdf_id] = pdf_doc
+    mock_pdfs[pdf_id] = pdf_meta
+    save_mock_db()
 
     # Process the PDF using marker-pdf
     try:
-        pdf_doc["status"] = ProcessingStatus.PROCESSING
+        pdf_meta["status"] = ProcessingStatus.PROCESSING
+        save_mock_db()
 
         # Process PDF with marker-pdf
         (
@@ -82,18 +171,32 @@ async def upload_pdf(
             summary,
         ) = await PDFProcessingService.process_pdf(file_path)
 
-        # Update PDF document with results
-        pdf_doc["status"] = ProcessingStatus.COMPLETED
-        pdf_doc["page_count"] = page_count
-        pdf_doc["extracted_text"] = extracted_text
-        pdf_doc["pages"] = pages
-        pdf_doc["summary"] = summary
+        # Create detailed content for separate file
+        pdf_details = {
+            "page_count": page_count,
+            "extracted_text": extracted_text,
+            "pages": pages,
+            "summary": summary,
+        }
+
+        # Save detailed content to separate file
+        save_pdf_details(pdf_id, pdf_details)
+
+        # Update basic metadata
+        pdf_meta["status"] = ProcessingStatus.COMPLETED
+        pdf_meta["page_count"] = page_count
+        save_mock_db()
 
     except Exception as e:
-        pdf_doc["status"] = ProcessingStatus.FAILED
+        pdf_meta["status"] = ProcessingStatus.FAILED
+        save_mock_db()
         print(f"Error processing PDF: {str(e)}")
 
-    return pdf_doc
+    # Combine metadata and details for the response
+    pdf_details = load_pdf_details(pdf_id) or {}
+    response_data = {**pdf_meta, **pdf_details}
+
+    return response_data
 
 
 @router.post(
@@ -104,8 +207,23 @@ async def process_pdf_from_url(
     current_user: User = Depends(get_current_user),
 ):
     """Process a PDF from a URL."""
-    # Validate URL (basic check)
-    if not pdf_data.url.lower().endswith(".pdf"):
+    url = pdf_data.url
+
+    # Handle arXiv URLs specially - they should end with .pdf
+    if "arxiv.org" in url.lower() and not url.lower().endswith(".pdf"):
+        # If it's an arXiv URL not ending with .pdf, add it
+        if "/pdf/" in url and not url.endswith(".pdf"):
+            url = f"{url}.pdf"
+        # Convert /abs/ URLs to /pdf/ URLs
+        elif "/abs/" in url:
+            # Extract the arXiv ID from the URL
+            parts = url.split("/abs/")
+            if len(parts) == 2:
+                arxiv_id = parts[1]
+                url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
+
+    # Now validate the URL
+    if not url.lower().endswith(".pdf"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="URL must point to a PDF file",
@@ -113,14 +231,12 @@ async def process_pdf_from_url(
 
     # Download the PDF
     try:
-        response = requests.get(pdf_data.url, stream=True, timeout=30)
+        response = requests.get(url, stream=True, timeout=30)
         response.raise_for_status()  # Raise an exception for bad responses
 
         # Check if the content is actually a PDF
         content_type = response.headers.get("Content-Type", "")
-        if "application/pdf" not in content_type and not pdf_data.url.lower().endswith(
-            ".pdf"
-        ):
+        if "application/pdf" not in content_type and not url.lower().endswith(".pdf"):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"The URL does not point to a PDF file. Content-Type: {content_type}",
@@ -133,7 +249,7 @@ async def process_pdf_from_url(
             temp_file_path = temp_file.name
 
         # Create a filename from the URL
-        filename = os.path.basename(pdf_data.url)
+        filename = os.path.basename(url)
         if not filename:
             filename = f"url_pdf_{len(mock_pdfs) + 1}.pdf"
 
@@ -145,7 +261,7 @@ async def process_pdf_from_url(
             # If not a good title, use the last part of the URL
             if len(title) < 3 or title.isdigit():
                 try:
-                    url_path = pdf_data.url.split("/")
+                    url_path = url.split("/")
                     path_parts = [
                         part
                         for part in url_path
@@ -155,7 +271,8 @@ async def process_pdf_from_url(
                         title = f"PDF from {path_parts[-2]}"
                     else:
                         title = f"PDF from URL {len(mock_pdfs) + 1}"
-                except:
+                except Exception as e:
+                    print(f"Error generating title: {e}")
                     title = f"PDF from URL {len(mock_pdfs) + 1}"
 
         # Create user directory if it doesn't exist
@@ -171,9 +288,9 @@ async def process_pdf_from_url(
         # Remove temporary file
         os.unlink(temp_file_path)
 
-        # Create PDF document
+        # Create PDF document metadata
         pdf_id = len(mock_pdfs) + 1
-        pdf_doc = {
+        pdf_meta = {
             "id": pdf_id,
             "title": title,
             "description": pdf_data.description,
@@ -185,11 +302,13 @@ async def process_pdf_from_url(
         }
 
         # Store in mock database
-        mock_pdfs[pdf_id] = pdf_doc
+        mock_pdfs[pdf_id] = pdf_meta
+        save_mock_db()
 
         # Process the PDF using marker-pdf
         try:
-            pdf_doc["status"] = ProcessingStatus.PROCESSING
+            pdf_meta["status"] = ProcessingStatus.PROCESSING
+            save_mock_db()
 
             # Process PDF with marker-pdf
             (
@@ -199,18 +318,32 @@ async def process_pdf_from_url(
                 summary,
             ) = await PDFProcessingService.process_pdf(permanent_path)
 
-            # Update PDF document with results
-            pdf_doc["status"] = ProcessingStatus.COMPLETED
-            pdf_doc["page_count"] = page_count
-            pdf_doc["extracted_text"] = extracted_text
-            pdf_doc["pages"] = pages
-            pdf_doc["summary"] = summary
+            # Create detailed content for separate file
+            pdf_details = {
+                "page_count": page_count,
+                "extracted_text": extracted_text,
+                "pages": pages,
+                "summary": summary,
+            }
+
+            # Save detailed content to separate file
+            save_pdf_details(pdf_id, pdf_details)
+
+            # Update basic metadata
+            pdf_meta["status"] = ProcessingStatus.COMPLETED
+            pdf_meta["page_count"] = page_count
+            save_mock_db()
 
         except Exception as e:
-            pdf_doc["status"] = ProcessingStatus.FAILED
+            pdf_meta["status"] = ProcessingStatus.FAILED
+            save_mock_db()
             print(f"Error processing PDF from URL: {str(e)}")
 
-        return pdf_doc
+        # Combine metadata and details for the response
+        pdf_details = load_pdf_details(pdf_id) or {}
+        response_data = {**pdf_meta, **pdf_details}
+
+        return response_data
 
     except requests.RequestException as e:
         raise HTTPException(
@@ -227,7 +360,12 @@ async def process_pdf_from_url(
 @router.get("/list", response_model=List[PDFResponse])
 async def list_pdfs(current_user: User = Depends(get_current_user)):
     """List all PDFs uploaded by the current user."""
+    print(f"User {current_user.id} requesting PDF list")
+    print(f"Total PDFs in mock database: {len(mock_pdfs)}")
+
     user_pdfs = [pdf for pdf in mock_pdfs.values() if pdf["user_id"] == current_user.id]
+    print(f"Found {len(user_pdfs)} PDFs for user {current_user.id}")
+
     return user_pdfs
 
 
@@ -240,15 +378,21 @@ async def get_pdf(pdf_id: int, current_user: User = Depends(get_current_user)):
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
 
-    pdf = mock_pdfs[pdf_id]
+    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
-    if pdf["user_id"] != current_user.id:
+    if pdf_meta["user_id"] != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
-    return pdf
+    # Load details from separate file
+    pdf_details = load_pdf_details(pdf_id)
+
+    # Combine metadata and details
+    response_data = {**pdf_meta, **pdf_details}
+
+    return response_data
 
 
 @router.get("/{pdf_id}/content")
@@ -260,31 +404,34 @@ async def get_pdf_content(pdf_id: int, current_user: User = Depends(get_current_
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
 
-    pdf = mock_pdfs[pdf_id]
+    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
-    if pdf["user_id"] != current_user.id:
+    if pdf_meta["user_id"] != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
     # Check if processing is complete
-    if pdf["status"] != ProcessingStatus.COMPLETED:
+    if pdf_meta["status"] != ProcessingStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"PDF processing not complete. Current status: {pdf['status']}",
+            detail=f"PDF processing not complete. Current status: {pdf_meta['status']}",
         )
 
-    # Return actual content if available, otherwise mock data
-    if "extracted_text" in pdf and "pages" in pdf:
+    # Load details from separate file
+    pdf_details = load_pdf_details(pdf_id)
+
+    # Return actual content if available
+    if pdf_details and "extracted_text" in pdf_details and "pages" in pdf_details:
         return {
-            "text": pdf["extracted_text"],  # This is now in markdown format
-            "pages": pdf["pages"],  # Each page text is also in markdown
+            "text": pdf_details["extracted_text"],
+            "pages": pdf_details["pages"],
         }
 
     # Fallback to mock content (for development only)
     return {
-        "text": "# Sample PDF Content for Development\n\nThis is the extracted text from the PDF in markdown format. If you are seeing this, it means the PDF was not processed correctly.",
+        "text": "# Sample PDF Content for Development\n\nThis is the extracted text from the PDF in markdown format. If you are seeing this, it means the PDF was not processed correctly.",  # noqa: E501
         "pages": [
             {
                 "page_number": 1,
@@ -309,28 +456,31 @@ async def get_pdf_summary(pdf_id: int, current_user: User = Depends(get_current_
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
 
-    pdf = mock_pdfs[pdf_id]
+    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
-    if pdf["user_id"] != current_user.id:
+    if pdf_meta["user_id"] != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
     # Check if processing is complete
-    if pdf["status"] != ProcessingStatus.COMPLETED:
+    if pdf_meta["status"] != ProcessingStatus.COMPLETED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"PDF processing not complete. Current status: {pdf['status']}",
+            detail=f"PDF processing not complete. Current status: {pdf_meta['status']}",
         )
 
-    # Return actual summary if available, otherwise mock data
-    if "summary" in pdf:
-        return pdf["summary"]
+    # Load details from separate file
+    pdf_details = load_pdf_details(pdf_id)
+
+    # Return actual summary if available
+    if pdf_details and "summary" in pdf_details:
+        return pdf_details["summary"]
 
     # Fallback to mock summary
     return {
-        "title": pdf["title"],
+        "title": pdf_meta["title"],
         "key_points": ["Key point 1", "Key point 2", "Key point 3"],
         "summary": "This is a summary of the PDF content.",
     }
@@ -345,23 +495,30 @@ async def delete_pdf(pdf_id: int, current_user: User = Depends(get_current_user)
             status_code=status.HTTP_404_NOT_FOUND, detail="PDF not found"
         )
 
-    pdf = mock_pdfs[pdf_id]
+    pdf_meta = mock_pdfs[pdf_id]
 
     # Check if user owns the PDF
-    if pdf["user_id"] != current_user.id:
+    if pdf_meta["user_id"] != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Access denied"
         )
 
     # Delete file if it exists
-    if os.path.exists(pdf["file_path"]):
-        os.remove(pdf["file_path"])
+    if os.path.exists(pdf_meta["file_path"]):
+        os.remove(pdf_meta["file_path"])
+
+    # Delete detail file if it exists
+    if "detail_path" in pdf_meta and os.path.exists(pdf_meta["detail_path"]):
+        os.remove(pdf_meta["detail_path"])
 
     # Clean up any extracted images
-    pdf_basename = os.path.basename(pdf["file_path"]).split(".")[0]
+    pdf_basename = os.path.basename(pdf_meta["file_path"]).split(".")[0]
     cleanup_pdf_images(pdf_basename)
 
     # Remove from mock database
     del mock_pdfs[pdf_id]
+
+    # After updating mock_pdfs
+    save_mock_db()
 
     return None

@@ -1,6 +1,7 @@
 /**
  * Base API client with common functionality for making requests to the backend
  */
+import { getSession } from 'next-auth/react';
 
 export interface ApiResponse<T> {
   data?: T;
@@ -15,26 +16,32 @@ export interface ApiRequestOptions {
 
 export class ApiClient {
   private baseUrl: string;
+  private apiPrefix: string;
 
-  constructor(baseUrl: string = '') {
-    this.baseUrl = baseUrl || '';
+  constructor(baseUrl: string = '', apiPrefix: string = '/api') {
+    this.baseUrl = baseUrl || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    this.apiPrefix = apiPrefix;
   }
 
   /**
    * Format URL with query parameters
    */
   private formatUrl(path: string, options?: ApiRequestOptions): string {
-    const url = `${this.baseUrl}${path}`;
-    
+    // Ensure path starts with a slash if not empty
+    const formattedPath = path && !path.startsWith('/') ? `/${path}` : path;
+
+    // Combine baseUrl, apiPrefix, and path
+    const url = `${this.baseUrl}${this.apiPrefix}${formattedPath}`;
+
     if (!options?.params) {
       return url;
     }
-    
+
     const queryParams = new URLSearchParams();
     Object.entries(options.params).forEach(([key, value]) => {
       queryParams.append(key, String(value));
     });
-    
+
     return `${url}?${queryParams.toString()}`;
   }
 
@@ -49,44 +56,62 @@ export class ApiClient {
   ): Promise<ApiResponse<T>> {
     try {
       const url = this.formatUrl(path, options);
-      
+
+      // Get authentication token from session
+      const session = await getSession();
+
       const headers = {
         'Content-Type': 'application/json',
         ...(options?.headers || {}),
       };
-      
+
+      // Add authorization header if token exists
+      if (session?.accessToken) {
+        headers['Authorization'] = `Bearer ${session.accessToken}`;
+      }
+
       const config: RequestInit = {
         method,
         headers,
         credentials: 'include',
       };
-      
+
       if (body && method !== 'GET') {
         config.body = JSON.stringify(body);
       }
-      
+
+      console.log(`API ${method} Request to: ${url}`);
+
       const response = await fetch(url, config);
       const status = response.status;
-      
+
       // For 204 No Content responses
       if (status === 204) {
         return { status, data: undefined };
       }
-      
+
       let data;
       try {
         data = await response.json();
       } catch (e) {
         data = undefined;
       }
-      
+
       if (!response.ok) {
+        console.error(`API Error (${status}):`, data);
+        // Handle authentication errors
+        if (status === 401) {
+          return {
+            status,
+            error: 'Not authenticated',
+          };
+        }
         return {
           status,
           error: data?.message || data?.detail || `Request failed with status ${status}`,
         };
       }
-      
+
       return { status, data };
     } catch (error) {
       console.error(`API error (${method} ${path}):`, error);

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+# Environment
+.env
+
+# Ini files
+*.ini
+
+# Logs
+*.log
+
+# Virtual environment
+.venv/
+
+# Uploads
+apps/api/uploads/
+
+# PDF files
+*.pdf
+
+# Markdown files except for README.md
+!README.md

@@ -123,83 +123,121 @@ class PDFProcessingService:
         if not pdf_id:
             pdf_id = uuid.uuid4().hex[:8]
 
-        # Create output directory for images
-        image_dir = os.path.join(settings.PDF_TEMP_DIR, pdf_id)
+        # Get the directory where the PDF file is stored
+        pdf_dir = os.path.dirname(file_path)
+
+        # Create output directory for images in the same directory as the PDF
+        output_dir_name = f"{pdf_id}_processed"
+        image_dir = os.path.join(pdf_dir, output_dir_name)
         os.makedirs(image_dir, exist_ok=True)
 
-        # Use the marker library to convert the PDF to markdown
-        converter = PdfConverter(
-            artifact_dict=create_model_dict(),
-            config={
-                "output_format": settings.MARKER_OUTPUT_FORMAT or "markdown",
-                "output_dir": image_dir,
-                # Set use_llm to False explicitly to avoid validation errors
-                "use_llm": False,
-            },
-        )
+        try:
+            # Use the marker library to convert the PDF to markdown
+            converter = PdfConverter(
+                artifact_dict=create_model_dict(),
+                config={
+                    "output_format": settings.MARKER_OUTPUT_FORMAT or "markdown",
+                    "output_dir": image_dir,
+                    # Set use_llm to False explicitly to avoid validation errors
+                    "use_llm": False,
+                },
+            )
 
-        # Convert the PDF
-        rendered = converter(file_path)
+            # Convert the PDF
+            rendered = converter(file_path)
 
-        # Extract text and images from the rendered result
-        markdown_text, metadata, extracted_images = text_from_rendered(rendered)
+            # Extract text and images from the rendered result
+            markdown_text, metadata, extracted_images = text_from_rendered(rendered)
 
-        # Get page count from metadata if available, otherwise estimate
-        page_count = metadata.get("num_pages", 0) if metadata else 0
-        if not page_count and hasattr(rendered, "children"):
-            page_count = len(rendered.children)
+            # Get page count - add proper type checking
+            page_count = 0
+            if metadata and isinstance(metadata, dict):
+                page_count = metadata.get("num_pages", 0)
+            elif hasattr(rendered, "children"):
+                page_count = len(rendered.children)
 
-        # Process pages - split markdown by page markers
-        pages = []
+            # If we still don't have a page count, try alternative method
+            if not page_count:
+                # Count page markers in the markdown text
+                import re
 
-        # If the markdown has page markers, split by them
-        page_splits = []
-        if "\n\n{PAGE_" in markdown_text:
-            # Split by page markers like {PAGE_0}, {PAGE_1}, etc.
-            import re
+                page_markers = re.findall(r"\{PAGE_\d+\}", markdown_text)
+                page_count = len(page_markers) or 1  # At least one page
 
-            page_splits = re.split(r"\n\n\{PAGE_\d+\}[\s\-*]*\n\n", markdown_text)
-            # Remove empty splits
-            page_splits = [p for p in page_splits if p.strip()]
-        else:
-            # If no page markers, treat as single page
-            page_splits = [markdown_text]
+            # Process pages - split markdown by page markers
+            pages = []
 
-        # Create page data structures
-        for i, page_content in enumerate(page_splits):
-            page_num = i + 1
+            # If the markdown has page markers, split by them
+            page_splits = []
+            if "\n\n{PAGE_" in markdown_text:
+                # Split by page markers like {PAGE_0}, {PAGE_1}, etc.
+                import re
 
-            # Get images for this page
-            page_images = []
-            if extracted_images:
-                # Filter images that belong to this page
-                page_images = [
-                    img
-                    for img in extracted_images
-                    if metadata and metadata.get("page_number") == page_num
-                ]
+                page_splits = re.split(r"\n\n\{PAGE_\d+\}[\s\-*]*\n\n", markdown_text)
+                # Remove empty splits
+                page_splits = [p for p in page_splits if p.strip()]
+            else:
+                # If no page markers, treat as single page
+                page_splits = [markdown_text]
 
-            # Save image paths
-            image_paths = []
-            for idx, img_data in enumerate(page_images):
-                img_path = os.path.join(image_dir, f"page_{page_num}_img_{idx}.png")
-                with open(img_path, "wb") as f:
-                    f.write(img_data)
-                image_paths.append(img_path)
+            # Create page data structures
+            for i, page_content in enumerate(page_splits):
+                page_num = i + 1
 
-            # Create page data
-            page_data = {
-                "page_number": page_num,
-                "text": page_content,
-                "images": image_paths,
-            }
-            pages.append(page_data)
+                # Get images for this page - add proper type checking
+                page_images = []
+                if extracted_images and isinstance(extracted_images, list):
+                    # Filter images that belong to this page if metadata is available
+                    if metadata and isinstance(metadata, dict):
+                        page_images = [
+                            img
+                            for img in extracted_images
+                            if metadata.get("page_number") == page_num
+                        ]
+                    else:
+                        # If no page metadata, just use all images for the first page
+                        page_images = extracted_images if i == 0 else []
 
-        # Generate summary
-        summary = PDFSummary(
-            title=os.path.basename(file_path),
-            key_points=["Converted to markdown with marker"],
-            summary=f"PDF with {page_count} pages processed and converted to markdown",
-        )
+                # Save image paths
+                image_paths = []
+                for idx, img_data in enumerate(page_images):
+                    try:
+                        img_path = os.path.join(
+                            image_dir, f"page_{page_num}_img_{idx}.png"
+                        )
+                        with open(img_path, "wb") as f:
+                            f.write(img_data)
+                        image_paths.append(img_path)
+                    except Exception as e:
+                        print(f"Error saving image: {e}")
 
-        return page_count, markdown_text, pages, summary
+                # Create page data
+                page_data = {
+                    "page_number": page_num,
+                    "text": page_content,
+                    "images": image_paths,
+                }
+                pages.append(page_data)
+
+            # Generate summary
+            summary = PDFSummary(
+                title=os.path.basename(file_path),
+                key_points=["Converted to markdown with marker"],
+                summary=f"PDF with {page_count} pages processed and converted to markdown",
+            )
+
+            return page_count, markdown_text, pages, summary
+
+        except Exception as e:
+            print(f"Error processing PDF: {str(e)}")
+            # Return minimal data to avoid breaking the API
+            return (
+                1,
+                f"Error processing PDF: {str(e)}",
+                [{"page_number": 1, "text": "Processing error", "images": []}],
+                PDFSummary(
+                    title=os.path.basename(file_path),
+                    key_points=["Error during processing"],
+                    summary="The PDF could not be processed properly. Please try again or contact support.",  # noqa: E501
+                ),
+            )
