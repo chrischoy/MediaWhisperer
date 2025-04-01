@@ -88,24 +88,44 @@ def get_pdf_detail_path(pdf_id, user_id, base_filename=None):
 
 
 # Helper function to load PDF details from a separate file
-def load_pdf_details(pdf_id) -> Optional[Dict[str, Any]]:
-    """Load PDF details from the upload folder."""
-    logger.info(f"Loading PDF details for {pdf_id}")
-    pdf_dir = os.path.join(settings.UPLOAD_DIR, f"{pdf_id}")
-    # Check if the directory exists
+def load_pdf_details(pdf_id, user_id=None) -> Optional[Dict[str, Any]]:
+    """Load PDF details from the upload folder using the new directory structure."""
+    # Check if this is a legacy call without user_id
+    if user_id is None and pdf_id in mock_pdfs:
+        user_id = mock_pdfs[pdf_id].get("user_id", 1)
+
+    logger.info(f"Loading PDF details for PDF ID: {pdf_id}, User ID: {user_id}")
+
+    # Construct directory path using the new structure
+    user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}")
+    pdf_dir = os.path.join(user_dir, f"pdf_{pdf_id}")
+
+    # If directory doesn't exist, try the old path format as fallback
     if not os.path.exists(pdf_dir):
-        return None
+        logger.warning(
+            f"PDF directory not found at new path: {pdf_dir}, trying legacy path"
+        )
+        pdf_dir = os.path.join(settings.UPLOAD_DIR, str(pdf_id))
+        if not os.path.exists(pdf_dir):
+            logger.warning(f"PDF directory not found at legacy path: {pdf_dir}")
+            return None
+
     # Grep md and jpeg files
     md_files = glob.glob(os.path.join(pdf_dir, "*.md"))
     jpeg_files = glob.glob(os.path.join(pdf_dir, "*.jpeg"))
     logger.info(
         f"Found {len(md_files)} markdown files and {len(jpeg_files)} jpeg files"
     )
+
     # Load the markdown file and return the content
     pdf_markdown = None
     if md_files:
-        with open(md_files[0], "r") as f:
-            pdf_markdown = f.read()
+        try:
+            with open(md_files[0], "r") as f:
+                pdf_markdown = f.read()
+        except Exception as e:
+            logger.error(f"Error loading markdown file: {e}")
+
     # Return None if no files are found
     return {
         "markdown": pdf_markdown,
@@ -136,9 +156,12 @@ async def upload_pdf(
             status_code=status.HTTP_400_BAD_REQUEST, detail="File must be a PDF"
         )
 
+    # Generate a PDF ID
+    pdf_id = len(mock_pdfs) + 1
+
     # Save file
     try:
-        filename, file_path = save_upload_file(file, current_user.id)
+        filename, file_path = save_upload_file(file, current_user.id, pdf_id)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -154,7 +177,6 @@ async def upload_pdf(
             title = f"PDF Document {len(mock_pdfs) + 1}"
 
     # Create PDF document metadata
-    pdf_id = len(mock_pdfs) + 1
     pdf_meta = {
         "id": pdf_id,
         "title": title,
@@ -180,7 +202,7 @@ async def upload_pdf(
             markdown_path,
             image_paths,
             summary,
-        ) = await PDFProcessingService.process_pdf(file_path)
+        ) = await PDFProcessingService.process_pdf(file_path, pdf_id, current_user.id)
 
         # Create detailed content for separate file
         pdf_details = {
@@ -199,7 +221,7 @@ async def upload_pdf(
         logger.error(f"Error processing PDF: {str(e)}")
 
     # Combine metadata and details for the response
-    pdf_details = load_pdf_details(pdf_id) or {}
+    pdf_details = load_pdf_details(pdf_id, current_user.id) or {}
     response_data = {**pdf_meta, **pdf_details}
 
     return response_data
@@ -282,11 +304,18 @@ async def process_pdf_from_url(
                     title = f"PDF from URL {len(mock_pdfs) + 1}"
 
         # Create user directory if it doesn't exist
-        user_dir = os.path.join(settings.UPLOAD_DIR, str(current_user.id))
+        user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{current_user.id}")
         os.makedirs(user_dir, exist_ok=True)
 
+        # Create PDF ID
+        pdf_id = len(mock_pdfs) + 1
+
+        # Create PDF-specific directory
+        pdf_dir = os.path.join(user_dir, f"pdf_{pdf_id}")
+        os.makedirs(pdf_dir, exist_ok=True)
+
         # Create permanent path (ensure it's absolute)
-        permanent_path = os.path.abspath(os.path.join(user_dir, filename))
+        permanent_path = os.path.abspath(os.path.join(pdf_dir, filename))
 
         # Copy temporary file to permanent location
         shutil.copy(temp_file_path, permanent_path)
@@ -295,7 +324,6 @@ async def process_pdf_from_url(
         os.unlink(temp_file_path)
 
         # Create PDF document metadata
-        pdf_id = len(mock_pdfs) + 1
         pdf_meta = {
             "id": pdf_id,
             "title": title,
@@ -321,7 +349,9 @@ async def process_pdf_from_url(
                 markdown_path,
                 image_paths,
                 summary,
-            ) = await PDFProcessingService.process_pdf(permanent_path)
+            ) = await PDFProcessingService.process_pdf(
+                permanent_path, pdf_id, current_user.id
+            )
 
             # Create detailed content for separate file
             pdf_details = {
@@ -335,7 +365,6 @@ async def process_pdf_from_url(
             save_mock_db()
 
         except Exception as e:
-            pdf_details = {}
             pdf_meta["status"] = ProcessingStatus.FAILED
             save_mock_db()
             logger.error(f"Error processing PDF from URL: {str(e)}")
@@ -397,7 +426,7 @@ async def get_pdf(pdf_id: int, current_user: User = Depends(get_current_user)):
         )
 
     # Load details from separate file
-    pdf_details = load_pdf_details(pdf_id)  # keys: markdown and images
+    pdf_details = load_pdf_details(pdf_id, current_user.id)  # keys: markdown and images
 
     if "markdown" not in pdf_details:
         raise HTTPException(
@@ -442,7 +471,7 @@ async def get_pdf_content(pdf_id: int, current_user: User = Depends(get_current_
         )
 
     # Load details from separate file
-    pdf_details = load_pdf_details(pdf_id)  # keys: markdown and images
+    pdf_details = load_pdf_details(pdf_id, current_user.id)  # keys: markdown and images
 
     # Return actual content if available
     if pdf_details and "markdown" in pdf_details and "images" in pdf_details:
@@ -483,7 +512,7 @@ async def get_pdf_summary(pdf_id: int, current_user: User = Depends(get_current_
         )
 
     # Load details from separate file
-    pdf_details = load_pdf_details(pdf_id)
+    pdf_details = load_pdf_details(pdf_id, current_user.id)
 
     # Return actual summary if available
     if pdf_details and "summary" in pdf_details:
@@ -521,9 +550,25 @@ async def delete_pdf(pdf_id: int, current_user: User = Depends(get_current_user)
     if "detail_path" in pdf_meta and os.path.exists(pdf_meta["detail_path"]):
         os.remove(pdf_meta["detail_path"])
 
-    # Clean up any extracted images
-    pdf_basename = os.path.basename(pdf_meta["file_path"]).split(".")[0]
-    cleanup_pdf_images(pdf_basename)
+    # Clean up the PDF directory
+    user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{current_user.id}")
+    pdf_dir = os.path.join(user_dir, f"pdf_{pdf_id}")
+
+    if os.path.exists(pdf_dir):
+        try:
+            shutil.rmtree(pdf_dir)
+            logger.info(f"Removed PDF directory: {pdf_dir}")
+        except Exception as e:
+            logger.error(f"Error removing PDF directory: {e}")
+
+    # Also check legacy directory structure
+    legacy_pdf_dir = os.path.join(settings.UPLOAD_DIR, str(pdf_id))
+    if os.path.exists(legacy_pdf_dir):
+        try:
+            shutil.rmtree(legacy_pdf_dir)
+            logger.info(f"Removed legacy PDF directory: {legacy_pdf_dir}")
+        except Exception as e:
+            logger.error(f"Error removing legacy PDF directory: {e}")
 
     # Remove from mock database
     del mock_pdfs[pdf_id]

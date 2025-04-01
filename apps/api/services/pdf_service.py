@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import shutil
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -109,12 +110,16 @@ class PDFProcessingService:
     """Service for processing PDF documents using marker."""
 
     @staticmethod
-    async def process_pdf(file_path: str) -> Tuple[str, List[str], PDFSummary]:
+    async def process_pdf(
+        file_path: str, pdf_id: int = None, user_id: int = None
+    ) -> Tuple[str, List[str], PDFSummary]:
         """
         Process a PDF file using marker.
 
         Args:
             file_path: Path to the PDF file
+            pdf_id: ID of the PDF in the database (used for directory naming)
+            user_id: ID of the user who uploaded the PDF
 
         Returns:
             Tuple containing:
@@ -125,19 +130,44 @@ class PDFProcessingService:
         # Ensure we're working with absolute paths
         file_path = os.path.abspath(file_path)
 
-        # Create a unique ID for this PDF processing
-        pdf_id = os.path.basename(file_path).split(".")[0]
-        if not pdf_id:
-            pdf_id = uuid.uuid4().hex[:8]
+        # Use the provided PDF ID or generate one from the filename
+        if pdf_id is None:
+            # Legacy behavior - generate ID from filename (not recommended)
+            basename = os.path.basename(file_path).split(".")[0]
+            pdf_id = basename if basename else uuid.uuid4().hex[:8]
 
-        # Get the directory where the PDF file is stored
-        pdf_dir = os.path.dirname(file_path)
+        # Get original directory and extract user ID from it if not provided
+        original_dir = os.path.dirname(file_path)
+        if user_id is None:
+            # Try to extract user_id from the path
+            if "user_" in original_dir:
+                try:
+                    user_dir_part = [
+                        part
+                        for part in original_dir.split(os.path.sep)
+                        if part.startswith("user_")
+                    ]
+                    if user_dir_part:
+                        user_id_str = user_dir_part[0].replace("user_", "")
+                        user_id = int(user_id_str)
+                except (ValueError, IndexError):
+                    user_id = 1  # Default to user 1 if parsing fails
+            else:
+                user_id = 1  # Default to user 1 if no user ID in path
 
-        # Create output directory for images in the same directory as the PDF
-        output_dir_name = f"{pdf_id}_processed"
-        image_dir = os.path.join(pdf_dir, output_dir_name)
-        image_dir = os.path.abspath(image_dir)
-        os.makedirs(image_dir, exist_ok=True)
+        # Create directory structure: settings.UPLOAD_DIR/user_{user_id}/pdf_{pdf_id}
+        user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}")
+        pdf_dir = os.path.join(user_dir, f"pdf_{pdf_id}")
+
+        # Ensure directories exist
+        os.makedirs(pdf_dir, exist_ok=True)
+
+        # Move the PDF to its dedicated directory if not already there
+        target_pdf_path = os.path.join(pdf_dir, os.path.basename(file_path))
+        if file_path != target_pdf_path:
+            shutil.copy(file_path, target_pdf_path)
+            # Update file_path to the new location
+            file_path = target_pdf_path
 
         try:
             # Use the marker library to convert the PDF to markdown
@@ -145,7 +175,7 @@ class PDFProcessingService:
                 artifact_dict=create_model_dict(),
                 config={
                     "output_format": settings.MARKER_OUTPUT_FORMAT or "markdown",
-                    "output_dir": image_dir,
+                    "output_dir": pdf_dir,
                     # Set use_llm to False explicitly to avoid validation errors
                     "use_llm": False,
                 },

@@ -14,13 +14,16 @@ def create_upload_directories():
     os.makedirs(settings.PDF_TEMP_DIR, exist_ok=True)
 
 
-def save_upload_file(upload_file: UploadFile, user_id: int) -> Tuple[str, str]:
+def save_upload_file(
+    upload_file: UploadFile, user_id: int, pdf_id: Optional[int] = None
+) -> Tuple[str, str]:
     """
     Save an uploaded file to disk.
 
     Args:
         upload_file: The uploaded file
         user_id: The ID of the user uploading the file
+        pdf_id: Optional ID of the PDF for directory structure
 
     Returns:
         Tuple containing:
@@ -28,8 +31,16 @@ def save_upload_file(upload_file: UploadFile, user_id: int) -> Tuple[str, str]:
         - The file path where it was saved
     """
     # Create user directory if it doesn't exist
-    user_dir = os.path.join(settings.UPLOAD_DIR, str(user_id))
+    user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}")
     os.makedirs(user_dir, exist_ok=True)
+
+    # If pdf_id is provided, create a specific PDF directory
+    if pdf_id is not None:
+        pdf_dir = os.path.join(user_dir, f"pdf_{pdf_id}")
+        os.makedirs(pdf_dir, exist_ok=True)
+        target_dir = pdf_dir
+    else:
+        target_dir = user_dir
 
     # If the original filename was passed, use it, otherwise generate a unique name
     original_filename = upload_file.filename
@@ -41,7 +52,7 @@ def save_upload_file(upload_file: UploadFile, user_id: int) -> Tuple[str, str]:
         unique_filename = secure_filename(original_filename)
 
     # Create the absolute file path
-    file_path = os.path.abspath(os.path.join(user_dir, unique_filename))
+    file_path = os.path.abspath(os.path.join(target_dir, unique_filename))
 
     # Save the file
     with open(file_path, "wb") as buffer:
