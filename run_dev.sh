@@ -2,6 +2,67 @@
 
 # Get the absolute path to the script directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ENV_SOURCE="$SCRIPT_DIR/.env" # Source env file
+API_ENV_TARGET="$SCRIPT_DIR/apps/api/.env"
+FRONTEND_ENV_TARGET="$SCRIPT_DIR/apps/frontend/.env"
+
+# Check if root .env exists
+if [ ! -f "$ENV_SOURCE" ]; then
+    echo "Error: Root .env file ($ENV_SOURCE) not found."
+    echo "Please copy .env.example to .env and fill in your values."
+    exit 1
+fi
+
+echo "Parsing root .env file for API and Frontend variables..."
+
+# --- API Environment Variables ---
+# Define API variables (add any new ones here)
+API_VARS=(
+    SECRET_KEY
+    ACCESS_TOKEN_EXPIRE_MINUTES
+    DATABASE_URL
+    UPLOAD_DIR
+    DEV_MODE
+    DEV_USER_ID
+    ANTHROPIC_API_KEY
+    GOOGLE_API_KEY
+    PERPLEXITY_API_KEY
+    MODEL
+    PERPLEXITY_MODEL
+    MAX_TOKENS
+    TEMPERATURE
+    DEBUG
+    LOG_LEVEL
+    DEFAULT_SUBTASKS
+    DEFAULT_PRIORITY
+    PROJECT_NAME
+)
+
+# Create/clear the target API .env file
+> "$API_ENV_TARGET"
+
+# Extract API variables from source .env
+for VAR_NAME in "${API_VARS[@]}"; do
+    grep "^${VAR_NAME}=" "$ENV_SOURCE" >> "$API_ENV_TARGET"
+done
+echo "Created $API_ENV_TARGET"
+
+# --- Frontend Environment Variables ---
+# Define Frontend variables (add any new ones here)
+FRONTEND_VARS=(
+    NEXTAUTH_SECRET
+    NEXT_PUBLIC_API_URL
+    NEXTAUTH_URL
+)
+
+# Create/clear the target Frontend .env file
+> "$FRONTEND_ENV_TARGET"
+
+# Extract Frontend variables from source .env
+for VAR_NAME in "${FRONTEND_VARS[@]}"; do
+    grep "^${VAR_NAME}=" "$ENV_SOURCE" >> "$FRONTEND_ENV_TARGET"
+done
+echo "Created $FRONTEND_ENV_TARGET"
 
 # Start API server
 echo "Starting API server..."
@@ -11,10 +72,6 @@ if [ -d "$SCRIPT_DIR/.venv" ]; then
     # Activate project-level virtual environment
     echo "Using project-level virtual environment..."
     source "$SCRIPT_DIR/.venv/bin/activate"
-elif [ -d "$SCRIPT_DIR/apps/api/venv" ]; then
-    # Activate API-level virtual environment
-    echo "Using API-level virtual environment..."
-    source "$SCRIPT_DIR/apps/api/venv/bin/activate"
 else
     echo "No virtual environment found. Please run ./install_deps.sh first."
     exit 1

@@ -9,8 +9,10 @@ def parse_bool_env(value) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
+        # Check for empty string first
         if not value or value.lower() in ("false", "0", "no", "n", "f"):
             return False
+    # Consider any non-false value as True, or be stricter if needed
     return True
 
 
@@ -31,14 +33,16 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
 
     # Security settings
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-for-development")
+    SECRET_KEY: str = os.getenv(
+        "SECRET_KEY", "your-super-secret-and-long-random-string"
+    )
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
 
     # Database settings
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./mediawhisperer.db")
     DATABASE_POOL_SIZE: int = int(os.getenv("DATABASE_POOL_SIZE", "5"))
     DATABASE_MAX_OVERFLOW: int = int(os.getenv("DATABASE_MAX_OVERFLOW", "10"))
-    DATABASE_ECHO: bool = os.getenv("DATABASE_ECHO", "false").lower() == "true"
+    DATABASE_ECHO: bool = False  # Default set here, validator runs before
 
     # Storage settings
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", os.path.join(API_DIR, "uploads"))
@@ -50,21 +54,46 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
     # For backward compatibility
     MARKER_PDF_ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-    # Enable Vision LLM - set by validator
-    USE_LLM: bool = False
+    # Enable Vision LLM
+    USE_LLM: bool = False  # Default set here, validator runs before
     # Output format
     MARKER_OUTPUT_FORMAT: str = os.getenv("MARKER_OUTPUT_FORMAT", "markdown")
 
-    @field_validator("USE_LLM", mode="before")
+    @field_validator("DEBUG", "DATABASE_ECHO", "USE_LLM", mode="before")
     @classmethod
-    def validate_use_llm(cls, v):
-        """Validate and parse USE_LLM from any format to boolean."""
+    def parse_env_booleans(cls, v):
+        """Validate and parse boolean fields from env vars before standard validation."""
+        # Get value from env var if not directly passed
+        # Note: BaseSettings handles loading from os.getenv implicitly for declared fields
+        # We just need to parse the value it finds.
         return parse_bool_env(v)
 
+    # Ensure integer fields handle potential env var strings
+    @field_validator(
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "DATABASE_POOL_SIZE",
+        "DATABASE_MAX_OVERFLOW",
+        "MAX_UPLOAD_SIZE",
+        mode="before",
+    )
+    @classmethod
+    def parse_env_integers(cls, v):
+        """Parse integer fields from env vars before standard validation."""
+        if isinstance(v, str):
+            try:
+                return int(v)
+            except ValueError:
+                # Handle error or raise a specific validation error
+                raise ValueError(
+                    f"Invalid integer format for environment variable: {v}"
+                )
+        return v  # Return as is if already an int or other type
+
     class Config:
+        # Load environment variables from .env file
         env_file = ".env"
         env_file_encoding = "utf-8"
-        extra = "ignore"  # Ignore extra fields in .env
+        extra = "allow"  # Changed from ignore to allow, explicitly define fields above
 
 
 settings = Settings()

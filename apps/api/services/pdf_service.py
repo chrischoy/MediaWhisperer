@@ -129,6 +129,7 @@ class PDFProcessingService:
         """
         # Ensure we're working with absolute paths
         file_path = os.path.abspath(file_path)
+        logger.debug(f"Processing PDF: {file_path}")
 
         # Use the provided PDF ID or generate one from the filename
         if pdf_id is None:
@@ -136,24 +137,8 @@ class PDFProcessingService:
             basename = os.path.basename(file_path).split(".")[0]
             pdf_id = basename if basename else uuid.uuid4().hex[:8]
 
-        # Get original directory and extract user ID from it if not provided
-        original_dir = os.path.dirname(file_path)
         if user_id is None:
-            # Try to extract user_id from the path
-            if "user_" in original_dir:
-                try:
-                    user_dir_part = [
-                        part
-                        for part in original_dir.split(os.path.sep)
-                        if part.startswith("user_")
-                    ]
-                    if user_dir_part:
-                        user_id_str = user_dir_part[0].replace("user_", "")
-                        user_id = int(user_id_str)
-                except (ValueError, IndexError):
-                    user_id = 1  # Default to user 1 if parsing fails
-            else:
-                user_id = 1  # Default to user 1 if no user ID in path
+            logger.error(f"User ID not provided for PDF: {file_path}")
 
         # Create directory structure: settings.UPLOAD_DIR/user_{user_id}/pdf_{pdf_id}
         user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}")
@@ -162,12 +147,13 @@ class PDFProcessingService:
         # Ensure directories exist
         os.makedirs(pdf_dir, exist_ok=True)
 
-        # Move the PDF to its dedicated directory if not already there
-        target_pdf_path = os.path.join(pdf_dir, os.path.basename(file_path))
-        if file_path != target_pdf_path:
-            shutil.copy(file_path, target_pdf_path)
-            # Update file_path to the new location
-            file_path = target_pdf_path
+        if not file_path.startswith(os.path.abspath(pdf_dir)):
+            # This case should ideally not happen if save_upload_file works correctly.
+            logger.warning(
+                f"PDF file {file_path} is not in the expected directory {pdf_dir}. Proceeding anyway."
+            )
+            # Optional: You could raise an error or attempt to copy/move if this scenario is possible.
+            # For now, we'll assume save_upload_file places it correctly.
 
         try:
             # Use the marker library to convert the PDF to markdown
@@ -181,11 +167,14 @@ class PDFProcessingService:
                 },
             )
 
+            logger.debug(f"Loaded converter")
             # Convert the PDF
             rendered = converter(file_path)
+            logger.debug(f"Rendered PDF")
 
             # Extract text and images from the rendered result
             markdown_text, _, extracted_images = text_from_rendered(rendered)
+            logger.debug(f"Extracted text")
             # extracted_images is a Dict[str, PIL.Image.Image]
             logger.info(f"Extracted text (first 1000 chars): {markdown_text[:1000]}")
 
@@ -205,9 +194,18 @@ class PDFProcessingService:
                 figure_pil_img.save(img_path)
                 logger.info(f"Saved image to {img_path}")
 
+            # Extract the title from the markdown text. The first line starts with # <title>
+            title = re.search(r"# (.*)", markdown_text).group(1)
+            # remove <span ...>...</span> tag from the title
+            title = re.sub(r"<span[^>]*>", "", title)
+            title = re.sub(r"</span>", "", title)
+
+            # TODO: AI generated key points, summary
+            # Use Abstract if it is an arxiv paper
+
             # Generate summary
             summary = PDFSummary(
-                title=os.path.basename(file_path),
+                title=title,
                 key_points=["Converted to markdown with marker"],
                 summary=f"PDF processed and converted to markdown",
             )
@@ -222,7 +220,7 @@ class PDFProcessingService:
                 f"Error processing PDF: {str(e)}",
                 [{"page_number": 1, "text": "Processing error", "images": []}],
                 PDFSummary(
-                    title=os.path.basename(file_path),
+                    title=f"Error processing {os.path.abspath(file_path)}",
                     key_points=["Error during processing"],
                     summary="The PDF could not be processed properly. Please try again or contact support.",  # noqa: E501
                 ),

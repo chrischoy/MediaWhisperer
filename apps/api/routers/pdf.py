@@ -362,6 +362,12 @@ async def process_pdf_from_url(
 
             # Update basic metadata
             pdf_meta["status"] = ProcessingStatus.COMPLETED
+
+            # For arxiv, update title to paper title
+            if "arxiv.org" in url.lower():
+                # Extract the paper title from the summary
+                paper_title = summary.title
+                pdf_meta["title"] = paper_title
             save_mock_db()
 
         except Exception as e:

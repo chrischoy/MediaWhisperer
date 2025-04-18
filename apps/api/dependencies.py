@@ -5,10 +5,13 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from mock_user_database import MOCK_USERS_BY_ID
 from models.user import User
-from pydantic import BaseModel
+from utils.logger import get_logger
 
 from config import settings
+
+logger = get_logger(__name__)
 
 # OAuth2 password bearer for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/token", auto_error=False)
@@ -29,6 +32,8 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
 
+    logger.info(f"Creating access token for user {data.get('sub')}")
+    logger.debug(f"First 10 chars of secret key: {settings.SECRET_KEY[:10]}")
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm="HS256")
 
@@ -56,16 +61,17 @@ async def get_current_user(
     request: Request, token: str = Depends(oauth2_scheme)
 ) -> User:
     """Get the current authenticated user."""
-    print("\n=== Authentication Debug ===")
-    print(f"DEV_MODE: {DEV_MODE}")
-    print(f"Request headers: {request.headers.items()}")
-    print(f"Authorization header: {token}")
+    logger.debug("\n=== Authentication Debug ===")
+    logger.debug(f"DEV_MODE: {DEV_MODE}")
+    logger.debug(f"Request headers: {request.headers.items()}")
+    logger.debug(f"Authorization header: {token}")
 
     if DEV_MODE:
-        print("DEV_MODE enabled, returning dev user")
+        logger.debug("DEV_MODE enabled, returning dev user")
         return User(id=DEV_USER_ID, email="dev@example.com", name="Dev User")
 
     if not token:
+        logger.info("No token provided, raising 401")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
@@ -74,13 +80,25 @@ async def get_current_user(
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        logger.debug(f"Payload: {payload}")
+        user_id_str: str = payload.get("sub")  # Read as string from token
+        if user_id_str is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token: missing 'sub' claim",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # Convert sub claim to integer for lookup
+        try:
+            user_id = int(user_id_str)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token: 'sub' claim is not a valid user ID",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -88,15 +106,15 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # In a real app, you would fetch the user from the database here
-    # For now, we'll use the mock user
-    mock_users = {1: {"id": 1, "email": "dev@example.com", "name": "Dev User"}}
-    user = mock_users.get(user_id)
-    if user is None:
+    # Use the shared mock database (lookup by integer ID)
+    user_data = MOCK_USERS_BY_ID.get(user_id)
+    if user_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    return User(**user)
+    # Return user model, excluding sensitive info like hashed_password if necessary
+    # The User model itself should handle what fields are exposed
+    return User(**user_data)
