@@ -14,7 +14,21 @@ import { pdfService, conversationService, PDFDocument, ConversationListItem } fr
 // Custom Markdown styles component
 const MarkdownContent = ({ content }: { content: string }) => {
   // Process content to hide span tags with page IDs
-  const processedContent = content?.replace(/<span\s+id="page-\d+-\d+"><\/span>/g, '');
+  let processedContent = content?.replace(/<span\s+id="page-\d+-\d+"><\/span>/g, '');
+
+  // Process display math blocks with \\tag
+  // Correct regex with capture groups for equation parts and tag number
+  const tagRegex = new RegExp('\\$\\$(.*?)\\\\tag\\{(.*?)\\}(.*?)\\$\\$', 'gs');
+  processedContent = processedContent.replace(
+    tagRegex,
+    // Use capture groups: _match, eqBeforeTag, tagNum, eqAfterTag
+    (_match, eqBeforeTag, tagNum, eqAfterTag) => {
+      // Combine content before and after \\tag, trimming whitespace
+      const fullEquation = ((eqBeforeTag || '').trim() + ' ' + (eqAfterTag || '').trim()).trim();
+      // Return the equation block without \\tag and append [tagNum] outside
+      return `$$${fullEquation}$$ [${tagNum}]`;
+    }
+  );
 
   return (
     <div className="markdown-body">
