@@ -43,7 +43,7 @@ API_VARS=(
 
 # Extract API variables from source .env
 for VAR_NAME in "${API_VARS[@]}"; do
-    grep "^${VAR_NAME}=" "$ENV_SOURCE" >> "$API_ENV_TARGET"
+    grep "^${VAR_NAME}=" "$ENV_SOURCE" | sed 's/[[:space:]]*#.*//' >> "$API_ENV_TARGET"
 done
 echo "Created $API_ENV_TARGET"
 
@@ -60,7 +60,7 @@ FRONTEND_VARS=(
 
 # Extract Frontend variables from source .env
 for VAR_NAME in "${FRONTEND_VARS[@]}"; do
-    grep "^${VAR_NAME}=" "$ENV_SOURCE" >> "$FRONTEND_ENV_TARGET"
+    grep "^${VAR_NAME}=" "$ENV_SOURCE" | sed 's/[[:space:]]*#.*//' >> "$FRONTEND_ENV_TARGET"
 done
 echo "Created $FRONTEND_ENV_TARGET"
 

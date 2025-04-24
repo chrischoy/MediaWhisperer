@@ -1,7 +1,14 @@
 import os
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    InitSettingsSource,
+    SecretsSettingsSource,
+    SettingsConfigDict,
+)
 
 
 def parse_bool_env(value) -> bool:
@@ -24,6 +31,12 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(API_DIR))
 
 class Settings(BaseSettings):
     """Application settings."""
+
+    model_config = SettingsConfigDict(
+        env_file=os.path.join(API_DIR, ".env"),
+        env_file_encoding="utf-8",
+        extra="allow",
+    )
 
     # Base settings
     APP_NAME: str = "MediaWhisperer API"
@@ -89,11 +102,19 @@ class Settings(BaseSettings):
                 )
         return v  # Return as is if already an int or other type
 
-    class Config:
-        # Load environment variables from .env file
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "allow"  # Changed from ignore to allow, explicitly define fields above
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: InitSettingsSource,
+        env_settings: EnvSettingsSource,
+        dotenv_settings: DotEnvSettingsSource,
+        file_secret_settings: SecretsSettingsSource,
+    ) -> tuple[InitSettingsSource, DotEnvSettingsSource]:
+        """
+        Only use init args and .env file, skip EnvSettingsSource.
+        """
+        return (init_settings, dotenv_settings)
 
 
 settings = Settings()
