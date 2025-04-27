@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 import requests
 from dependencies import get_current_user
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from models.pdf import PDFCreate, PDFDocument, PDFFromURL, PDFResponse, ProcessingStatus
 from models.user import User
 from services.pdf_service import PDFProcessingService
@@ -449,6 +449,63 @@ async def get_pdf(pdf_id: int, current_user: User = Depends(get_current_user)):
     logger.info(f"====== END PDF ENDPOINT DEBUG ======")
 
     return response_data
+
+
+@router.get("/{pdf_id}/images/{filename}")
+async def get_pdf_image(
+    pdf_id: int,
+    filename: str,
+):
+    """Serve a specific image associated with a PDF."""
+    # Basic security check for filename to prevent path traversal
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid filename"
+        )
+
+    # --- Look up user_id from PDF metadata ---
+    pdf_meta = mock_pdfs.get(pdf_id)
+    if not pdf_meta:
+        # Don't reveal if PDF exists, just say image not found for security
+        logger.warning(
+            f"PDF metadata not found for PDF ID: {pdf_id} when requesting image: {filename}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
+        )
+
+    user_id = pdf_meta.get("user_id")
+    if not user_id:
+        logger.error(f"User ID not found in PDF metadata for PDF ID: {pdf_id}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+    # --- End lookup ---
+
+    # Construct the expected file path using the retrieved user_id
+    user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}")
+    pdf_dir = os.path.join(user_dir, f"pdf_{pdf_id}")
+    file_path = os.path.join(pdf_dir, filename)
+
+    logger.info(f"Attempting to serve image: {file_path}")
+
+    # Check if the file exists
+    if not os.path.exists(file_path):
+        logger.warning(f"Image not found at path: {file_path}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
+        )
+
+    # Check if it is indeed a file (and not a directory, etc.)
+    if not os.path.isfile(file_path):
+        logger.error(f"Requested path is not a file: {file_path}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid path"
+        )
+
+    # Return the file
+    return FileResponse(path=file_path)
 
 
 @router.get("/{pdf_id}/content")

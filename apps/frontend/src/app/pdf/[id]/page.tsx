@@ -7,12 +7,16 @@ import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeKatex from 'rehype-katex';
 import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'katex/dist/katex.min.css';
 import { pdfService, conversationService, PDFDocument, ConversationListItem } from '@/services';
 
+// Define the base URL for the API
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
 // Custom Markdown styles component
-const MarkdownContent = ({ content }: { content: string }) => {
+const MarkdownContent = ({ content, imageBaseUrl }: { content: string; imageBaseUrl: string }) => {
   // Process content to hide span tags with page IDs
   let processedContent = content?.replace(/<span\s+id="page-\d+-\d+"><\/span>/g, '');
 
@@ -29,6 +33,16 @@ const MarkdownContent = ({ content }: { content: string }) => {
       return `$$${fullEquation}$$ [${tagNum}]`;
     }
   );
+
+  // Function to transform relative image URLs
+  const urlTransform = (uri: string) => {
+    // If the URI is already absolute, return it as is
+    if (uri.startsWith('http://') || uri.startsWith('https://') || uri.startsWith('/')) {
+      return uri;
+    }
+    // Otherwise, prepend the base URL
+    return `${imageBaseUrl}/${uri}`;
+  };
 
   return (
     <div className="markdown-body">
@@ -196,7 +210,8 @@ const MarkdownContent = ({ content }: { content: string }) => {
       `}</style>
       <ReactMarkdown
         rehypePlugins={[rehypeRaw, rehypeKatex, rehypeHighlight]}
-        remarkPlugins={[remarkMath]}
+        remarkPlugins={[remarkMath, remarkGfm]}
+        urlTransform={urlTransform}
       >
         {processedContent}
       </ReactMarkdown>
@@ -216,6 +231,9 @@ const PDFDetailPage = () => {
   const [conversationError, setConversationError] = useState<string | null>(null);
 
   const pdfId = Array.isArray(params.id) ? params.id[0] : params.id;
+
+  // Construct the base URL for images specific to this PDF
+  const imageBaseUrl = pdfId ? `${API_BASE_URL}/api/pdf/${pdfId}/images` : '';
 
   // Fetch PDF data
   useEffect(() => {
@@ -419,7 +437,7 @@ const PDFDetailPage = () => {
         ) : (
           <div className="max-w-none">
             {pdf.markdown ? (
-              <MarkdownContent content={pdf.markdown} />
+              <MarkdownContent content={pdf.markdown} imageBaseUrl={imageBaseUrl} />
             ) : (
               <p className="text-gray-500">
                 No content available yet. The PDF is still being processed.
